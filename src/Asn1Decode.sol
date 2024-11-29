@@ -31,6 +31,8 @@ library Asn1Decode {
     using LibNodePtr for NodePtr;
     using LibBytes for bytes;
 
+    bytes1 public constant NULL_VALUE = 0xF6;
+
     /*
      * @dev Get the root node. First step in traversing an ASN1 structure
      * @param der The DER-encoded ASN1 structure
@@ -75,13 +77,30 @@ library Asn1Decode {
      * @dev Extract value of bitstring node from DER-encoded structure
      * @param der The DER-encoded ASN1 structure
      * @param ptr Points to the indices of the current node
-     * @return Value of bitstring converted to bytes
+     * @return A pointer to a bitstring
      */
-    function bitstringAt(bytes memory der, NodePtr ptr) internal pure returns (NodePtr) {
+    function bitstring(bytes memory der, NodePtr ptr) internal pure returns (NodePtr) {
         require(der[ptr.header()] == 0x03, "Not type BIT STRING");
         // Only 00 padded bitstr can be converted to bytestr!
-        require(der[ptr.content()] == 0x00);
+        require(der[ptr.content()] == 0x00, "Non-0-padded BIT STRING");
         return LibNodePtr.toNodePtr(ptr.header(), ptr.content() + 1, ptr.length() - 1);
+    }
+
+    function bitstringUintAt(bytes memory der, NodePtr ptr) internal pure returns (uint256) {
+        require(der[ptr.header()] == 0x03, "Not type BIT STRING");
+        uint256 len = ptr.length() - 1;
+        return uint256(readBytesN(der, ptr.content() + 1, len) >> ((32 - len) * 8));
+    }
+
+    /*
+     * @dev Extract value of octet string node from DER-encoded structure
+     * @param der The DER-encoded ASN1 structure
+     * @param ptr Points to the indices of the current node
+     * @return A pointer to a octet string
+     */
+    function octetString(bytes memory der, NodePtr ptr) internal pure returns (NodePtr) {
+        require(der[ptr.header()] == 0x04, "Not type OCTET STRING");
+        return readNodeLength(der, ptr.content());
     }
 
     /*

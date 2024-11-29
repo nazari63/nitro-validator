@@ -31,7 +31,7 @@ library NitroAttestation {
         NodePtr nonce;
     }
 
-    function parseAttestation(bytes memory attestationTbs) internal view returns (Ptrs memory) {
+    function parseAttestation(bytes memory attestationTbs) internal pure returns (Ptrs memory) {
         require(attestationTbs.keccak(0, 18) == ATTESTATION_TBS_PREFIX, "invalid attestation prefix");
 
         NodePtr payload = readNextElement(attestationTbs, 18);
@@ -89,10 +89,11 @@ library NitroAttestation {
                 for (uint256 i = 0; i < value.length(); i++) {
                     key = readNextElement(attestationTbs, offset);
                     require(key.header() == 0x00, "invalid pcr key type");
-                    require(key.length() == i, "invalid pcr key value");
+                    require(key.length() < value.length(), "invalid pcr key value");
+                    require(NodePtr.unwrap(ptrs.pcrs[key.length()]) == 0, "duplicate pcr key");
                     NodePtr pcr = readNextElement(attestationTbs, key.content());
                     require(pcr.header() == 0x40, "invalid pcr type");
-                    ptrs.pcrs[i] = pcr;
+                    ptrs.pcrs[key.length()] = pcr;
                     offset = pcr.content() + pcr.length();
                 }
             } else {

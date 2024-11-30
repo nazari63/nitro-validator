@@ -2,7 +2,7 @@
 pragma solidity ^0.8.15;
 
 library LibBytes {
-    function keccak(bytes memory data, uint256 offset, uint256 length) public pure returns (bytes32 result) {
+    function keccak(bytes memory data, uint256 offset, uint256 length) internal pure returns (bytes32 result) {
         assembly {
             result := keccak256(add(data, add(32, offset)), length)
         }

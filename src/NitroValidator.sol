@@ -15,6 +15,8 @@ contract NitroValidator {
     using LibNodePtr for NodePtr;
 
     bytes32 public constant ATTESTATION_TBS_PREFIX = keccak256(hex"846a5369676e61747572653144a101382240");
+    bytes32 public constant ATTESTATION_DIGEST = keccak256("SHA384");
+
     bytes32 public constant CERTIFICATE_KEY = keccak256(bytes("certificate"));
     bytes32 public constant PUBLIC_KEY_KEY = keccak256(bytes("public_key"));
     bytes32 public constant MODULE_ID_KEY = keccak256(bytes("module_id"));
@@ -24,9 +26,6 @@ contract NitroValidator {
     bytes32 public constant DIGEST_KEY = keccak256(bytes("digest"));
     bytes32 public constant NONCE_KEY = keccak256(bytes("nonce"));
     bytes32 public constant PCRS_KEY = keccak256(bytes("pcrs"));
-
-    // attestation / certificate constants
-    bytes32 public constant ATTESTATION_DIGEST = keccak256("SHA384");
 
     // ECDSA384 curve parameters (NIST P-384)
     bytes public constant CURVE_A =

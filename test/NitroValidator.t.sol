@@ -5,7 +5,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {NitroValidator} from "../src/NitroValidator.sol";
 import {CertManager} from "../src/CertManager.sol";
 
-contract CounterTest is Test {
+contract NitroValidatorTest is Test {
     NitroValidator public validator;
 
     function setUp() public {

@@ -74,7 +74,7 @@ library Asn1Decode {
     }
 
     /*
-     * @dev Extract value of bitstring node from DER-encoded structure
+     * @dev Extract pointer of bitstring node from DER-encoded structure
      * @param der The DER-encoded ASN1 structure
      * @param ptr Points to the indices of the current node
      * @return A pointer to a bitstring
@@ -86,6 +86,12 @@ library Asn1Decode {
         return LibNodePtr.toNodePtr(ptr.header(), ptr.content() + 1, ptr.length() - 1);
     }
 
+    /*
+     * @dev Extract value of bitstring node from DER-encoded structure
+     * @param der The DER-encoded ASN1 structure
+     * @param ptr Points to the indices of the current node
+     * @return A bitstring encoded in a uint256
+     */
     function bitstringUintAt(bytes memory der, NodePtr ptr) internal pure returns (uint256) {
         require(der[ptr.header()] == 0x03, "Not type BIT STRING");
         uint256 len = ptr.length() - 1;
@@ -116,6 +122,12 @@ library Asn1Decode {
         return uint256(readBytesN(der, ptr.content(), len) >> (32 - len) * 8);
     }
 
+    /*
+     * @dev Extract value of a positive integer node from DER-encoded structure
+     * @param der The DER-encoded ASN1 structure
+     * @param ptr Points to the indices of the current node
+     * @return 384-bit uint encoded in uint128 and uint256
+     */
     function uint384At(bytes memory der, NodePtr ptr) internal pure returns (uint128, uint256) {
         require(der[ptr.header()] == 0x02, "Not type INTEGER");
         require(der[ptr.content()] & 0x80 == 0, "Not positive");
@@ -131,6 +143,12 @@ library Asn1Decode {
         );
     }
 
+    /*
+     * @dev Extract value of a timestamp from DER-encoded structure
+     * @param der The DER-encoded ASN1 structure
+     * @param ptr Points to the indices of the current node
+     * @return UNIX timestamp (seconds since 1970/01/01)
+     */
     function timestampAt(bytes memory der, NodePtr ptr) internal pure returns (uint256) {
         uint16 _years;
         uint256 offset = ptr.content();
@@ -150,10 +168,6 @@ library Asn1Decode {
         uint8 _secs = (uint8(der[offset + 10]) - 48) * 10 + uint8(der[offset + 11]) - 48;
 
         return timestampFromDateTime(_years, _months, _days, _hours, _mins, _secs);
-    }
-
-    function byteAtOffset(bytes memory der, NodePtr ptr, uint256 offset) internal pure returns (bytes1) {
-        return der[ptr.content() + offset];
     }
 
     function readNodeLength(bytes memory der, uint256 ix) private pure returns (NodePtr) {

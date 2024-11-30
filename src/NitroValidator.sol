@@ -1,43 +1,32 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 
+import {CertManager} from "./CertManager.sol";
 import {Sha2Ext} from "./Sha2Ext.sol";
 import {Asn1Decode} from "./Asn1Decode.sol";
-import {NitroAttestation} from "./NitroAttestation.sol";
 import {ECDSA384} from "./ECDSA384.sol";
 import {LibBytes} from "./LibBytes.sol";
 import {NodePtr, LibNodePtr} from "./NodePtr.sol";
 
 // adapted from https://github.com/marlinprotocol/NitroProver/blob/f1d368d1f172ad3a55cd2aaaa98ad6a6e7dcde9d/src/NitroProver.sol
-// and https://github.com/marlinprotocol/NitroProver/blob/f1d368d1f172ad3a55cd2aaaa98ad6a6e7dcde9d/src/CertManager.sol
 
 contract NitroValidator {
-    using Asn1Decode for bytes;
-    using NitroAttestation for bytes;
     using LibBytes for bytes;
     using LibNodePtr for NodePtr;
 
-    // @dev download the root CA cert for AWS nitro enclaves from https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip
-    // @dev convert the base64 encoded pub key into hex to get the cert below
-    bytes public constant ROOT_CA_CERT =
-        hex"3082021130820196a003020102021100f93175681b90afe11d46ccb4e4e7f856300a06082a8648ce3d0403033049310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753311b301906035504030c126177732e6e6974726f2d656e636c61766573301e170d3139313032383133323830355a170d3439313032383134323830355a3049310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753311b301906035504030c126177732e6e6974726f2d656e636c617665733076301006072a8648ce3d020106052b8104002203620004fc0254eba608c1f36870e29ada90be46383292736e894bfff672d989444b5051e534a4b1f6dbe3c0bc581a32b7b176070ede12d69a3fea211b66e752cf7dd1dd095f6f1370f4170843d9dc100121e4cf63012809664487c9796284304dc53ff4a3423040300f0603551d130101ff040530030101ff301d0603551d0e041604149025b50dd90547e796c396fa729dcf99a9df4b96300e0603551d0f0101ff040403020186300a06082a8648ce3d0403030369003066023100a37f2f91a1c9bd5ee7b8627c1698d255038e1f0343f95b63a9628c3d39809545a11ebcbf2e3b55d8aeee71b4c3d6adf3023100a2f39b1605b27028a5dd4ba069b5016e65b4fbde8fe0061d6a53197f9cdaf5d943bc61fc2beb03cb6fee8d2302f3dff6";
-    bytes32 public constant ROOT_CA_CERT_HASH = keccak256(ROOT_CA_CERT);
-    // OID 1.2.840.10045.4.3.3 represents {iso(1) member-body(2) us(840) ansi-x962(10045) signatures(4) ecdsa-with-SHA2(3) ecdsa-with-SHA384(3)}
-    // which essentially means the signature algorithm is Elliptic curve Digital Signature Algorithm (DSA) coupled with the Secure Hash Algorithm 384 (SHA384) algorithm
-    // @dev Sig algo is hardcoded here because the root cerificate's sig algorithm is known beforehand
-    // @dev reference article for encoding https://learn.microsoft.com/en-in/windows/win32/seccertenroll/about-object-identifier
-    bytes32 public constant CERT_ALGO_OID = keccak256(hex"06082a8648ce3d040303");
-    // https://oid-rep.orange-labs.fr/get/1.2.840.10045.2.1
-    // 1.2.840.10045.2.1 {iso(1) member-body(2) us(840) ansi-x962(10045) keyType(2) ecPublicKey(1)} represents Elliptic curve public key cryptography
-    bytes32 public constant EC_PUB_KEY_OID = keccak256(hex"2a8648ce3d0201");
-    // https://oid-rep.orange-labs.fr/get/1.3.132.0.34
-    // 1.3.132.0.34 {iso(1) identified-organization(3) certicom(132) curve(0) ansip384r1(34)} represents NIST 384-bit elliptic curve
-    bytes32 public constant SECP_384_R1_OID = keccak256(hex"2b81040022");
+    bytes32 public constant ATTESTATION_TBS_PREFIX = keccak256(hex"846a5369676e61747572653144a101382240");
+    bytes32 public constant CERTIFICATE_KEY = keccak256(bytes("certificate"));
+    bytes32 public constant PUBLIC_KEY_KEY = keccak256(bytes("public_key"));
+    bytes32 public constant MODULE_ID_KEY = keccak256(bytes("module_id"));
+    bytes32 public constant TIMESTAMP_KEY = keccak256(bytes("timestamp"));
+    bytes32 public constant USER_DATA_KEY = keccak256(bytes("user_data"));
+    bytes32 public constant CABUNDLE_KEY = keccak256(bytes("cabundle"));
+    bytes32 public constant DIGEST_KEY = keccak256(bytes("digest"));
+    bytes32 public constant NONCE_KEY = keccak256(bytes("nonce"));
+    bytes32 public constant PCRS_KEY = keccak256(bytes("pcrs"));
 
     // attestation / certificate constants
     bytes32 public constant ATTESTATION_DIGEST = keccak256("SHA384");
-    bytes32 public constant BASIC_CONSTRAINTS_OID = keccak256(hex"551d13");
-    bytes32 public constant KEY_USAGE_OID = keccak256(hex"551d0f");
 
     // ECDSA384 curve parameters (NIST P-384)
     bytes public constant CURVE_A =
@@ -55,54 +44,29 @@ contract NitroValidator {
     bytes public constant CURVE_LOW_S_MAX =
         hex"7fffffffffffffffffffffffffffffffffffffffffffffffe3b1a6c0fa1b96efac0d06d9245853bd76760cb5666294b9";
 
-    struct CachedCert {
-        uint256 notAfter;
-        int256 maxPathLen;
-        bytes pubKey;
+    struct Ptrs {
+        NodePtr moduleID;
+        uint64 timestamp;
+        NodePtr digest;
+        NodePtr[] pcrs;
+        NodePtr cert;
+        NodePtr[] cabundle;
+        NodePtr publicKey;
+        NodePtr userData;
+        NodePtr nonce;
     }
 
-    // certHash -> CachedCert
-    mapping(bytes32 => bytes) public verified;
+    CertManager public immutable certManager;
 
-    constructor() {
-        CachedCert memory empty;
-        _verifyCert(ROOT_CA_CERT, LibNodePtr.toNodePtr(0, 0, ROOT_CA_CERT.length), ROOT_CA_CERT_HASH, false, empty);
-    }
-
-    function verifyCert(bytes memory cert, bool clientCert, bytes32 parentCertHash)
-        external
-        returns (CachedCert memory)
-    {
-        bytes memory parentCacheBytes = verified[parentCertHash];
-        require(parentCacheBytes.length != 0, "parent cert unverified");
-        CachedCert memory parentCache = abi.decode(parentCacheBytes, (CachedCert));
-        require(parentCache.notAfter >= block.timestamp, "parent cert expired");
-        bytes32 certHash = keccak256(cert);
-        require(verified[certHash].length == 0, "cert already verified");
-        return _verifyCert(cert, LibNodePtr.toNodePtr(0, 0, cert.length), certHash, clientCert, parentCache);
-    }
-
-    function verifyCertBundle(bytes memory certificate, bytes[] calldata cabundle)
-        external
-        returns (CachedCert memory)
-    {
-        CachedCert memory parentCache;
-        for (uint256 i = 0; i < cabundle.length; i++) {
-            bytes32 certHash = keccak256(cabundle[i]);
-            require(i > 0 || certHash == ROOT_CA_CERT_HASH, "Root CA cert not matching");
-            parentCache =
-                _verifyCert(cabundle[i], LibNodePtr.toNodePtr(0, 0, cabundle.length), certHash, false, parentCache);
-        }
-        return _verifyCert(
-            certificate, LibNodePtr.toNodePtr(0, 0, certificate.length), keccak256(certificate), true, parentCache
-        );
+    constructor(CertManager _certManager) {
+        certManager = _certManager;
     }
 
     function validateAttestation(bytes memory attestationTbs, bytes memory signature)
         external
-        returns (NitroAttestation.Ptrs memory)
+        returns (Ptrs memory)
     {
-        NitroAttestation.Ptrs memory ptrs = attestationTbs.parseAttestation();
+        Ptrs memory ptrs = _parseAttestation(attestationTbs);
 
         require(ptrs.moduleID.length() > 0, "no module id");
         require(ptrs.timestamp > 0, "no timestamp");
@@ -125,215 +89,110 @@ contract NitroValidator {
             "invalid nonce"
         );
 
-        CachedCert memory parentCache;
-        bytes32 certHash;
+        bytes memory cert = attestationTbs.slice(ptrs.cert.content(), ptrs.cert.content() + ptrs.cert.length());
+        bytes[] memory cabundle = new bytes[](ptrs.cabundle.length);
         for (uint256 i = 0; i < ptrs.cabundle.length; i++) {
-            certHash = attestationTbs.keccak(ptrs.cabundle[i].content(), ptrs.cabundle[i].length());
-            require(i > 0 || certHash == ROOT_CA_CERT_HASH, "Root CA cert not matching");
-            parentCache = _verifyCert(attestationTbs, ptrs.cabundle[i], certHash, false, parentCache);
+            cabundle[i] = attestationTbs.slice(ptrs.cabundle[i].content(), ptrs.cabundle[i].content() + ptrs.cabundle[i].length());
         }
-        certHash = attestationTbs.keccak(ptrs.cert.content(), ptrs.cert.length());
-        parentCache = _verifyCert(attestationTbs, ptrs.cert, certHash, true, parentCache);
 
+        CertManager.CachedCert memory parent = certManager.verifyCertBundle(cert, cabundle);
         bytes memory hash = Sha2Ext.sha384(attestationTbs, 0, attestationTbs.length);
-        _verifySignature(parentCache.pubKey, hash, signature);
+        _verifySignature(parent.pubKey, hash, signature);
 
         return ptrs;
     }
 
-    function _verifyCert(
-        bytes memory certificate,
-        NodePtr ptr,
-        bytes32 certHash,
-        bool clientCert,
-        CachedCert memory parentCache
-    ) internal returns (CachedCert memory) {
-        // skip verification if already verified
-        bytes memory cacheBytes = verified[certHash];
-        CachedCert memory cache;
-        if (cacheBytes.length != 0) {
-            cache = abi.decode(cacheBytes, (CachedCert));
-            require(cache.notAfter >= block.timestamp, "cert expired");
-            return cache;
-        }
+    function _parseAttestation(bytes memory attestationTbs) internal pure returns (Ptrs memory) {
+        require(attestationTbs.keccak(0, 18) == ATTESTATION_TBS_PREFIX, "invalid attestation prefix");
 
-        NodePtr root = certificate.rootOf(ptr);
-        NodePtr tbsCertPtr = certificate.firstChildOf(root);
-        (uint256 notAfter, int256 maxPathLen, bytes memory pubKey) = _parseTbs(certificate, tbsCertPtr, clientCert);
+        NodePtr payload = _readNextElement(attestationTbs, 18);
+        require(payload.header() == 0x40, "invalid attestation payload type");
+        NodePtr payloadMap = _readNextElement(attestationTbs, payload.content());
+        require(payloadMap.header() == 0xa0, "invalid attestation payload map type");
 
-        if (parentCache.pubKey.length != 0 || certHash != ROOT_CA_CERT_HASH) {
-            if (parentCache.maxPathLen > 0 && (maxPathLen < 0 || maxPathLen >= parentCache.maxPathLen)) {
-                maxPathLen = parentCache.maxPathLen - 1;
-            }
-            require((parentCache.maxPathLen == 0) == clientCert, "maxPathLen exceeded");
-            _verifyCertSignature(certificate, tbsCertPtr, parentCache.pubKey);
-        }
-
-        cache = CachedCert({notAfter: notAfter, maxPathLen: maxPathLen, pubKey: pubKey});
-        verified[certHash] = abi.encode(cache);
-        return cache;
-    }
-
-    function _parseTbs(bytes memory certificate, NodePtr ptr, bool clientCert)
-        internal
-        view
-        returns (uint256 notAfter, int256 maxPathLen, bytes memory pubKey)
-    {
-        NodePtr versionPtr = certificate.firstChildOf(ptr);
-        NodePtr vPtr = certificate.firstChildOf(versionPtr);
-        NodePtr serialPtr = certificate.nextSiblingOf(versionPtr);
-        NodePtr sigAlgoPtr = certificate.nextSiblingOf(serialPtr);
-
-        require(certificate.keccak(sigAlgoPtr.content(), sigAlgoPtr.length()) == CERT_ALGO_OID, "invalid cert sig algo");
-        uint256 version = certificate.uintAt(vPtr);
-        // as extensions are used in cert, version should be 3 (value 2) as per https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.1
-        require(version == 2, "version should be 3");
-
-        (notAfter, maxPathLen, pubKey) = _parseTbsInner(certificate, sigAlgoPtr, clientCert);
-    }
-
-    function _parseTbsInner(bytes memory certificate, NodePtr sigAlgoPtr, bool clientCert)
-        internal
-        view
-        returns (uint256 notAfter, int256 maxPathLen, bytes memory pubKey)
-    {
-        NodePtr issuerPtr = certificate.nextSiblingOf(sigAlgoPtr);
-        NodePtr validityPtr = certificate.nextSiblingOf(issuerPtr);
-        NodePtr subjectPtr = certificate.nextSiblingOf(validityPtr);
-        NodePtr subjectPublicKeyInfoPtr = certificate.nextSiblingOf(subjectPtr);
-        NodePtr extensionsPtr = certificate.nextSiblingOf(subjectPublicKeyInfoPtr);
-
-        notAfter = _verifyValidity(certificate, validityPtr);
-        maxPathLen = _verifyExtensions(certificate, extensionsPtr, clientCert);
-        pubKey = _parsePubKey(certificate, subjectPublicKeyInfoPtr);
-    }
-
-    function _parsePubKey(bytes memory certificate, NodePtr subjectPublicKeyInfoPtr)
-        internal
-        pure
-        returns (bytes memory subjectPubKey)
-    {
-        NodePtr pubKeyAlgoPtr = certificate.firstChildOf(subjectPublicKeyInfoPtr);
-        NodePtr pubKeyAlgoIdPtr = certificate.firstChildOf(pubKeyAlgoPtr);
-        NodePtr algoParamsPtr = certificate.nextSiblingOf(pubKeyAlgoIdPtr);
-        NodePtr subjectPublicKeyPtr = certificate.nextSiblingOf(pubKeyAlgoPtr);
-        NodePtr subjectPubKeyPtr = certificate.bitstring(subjectPublicKeyPtr);
-
-        require(
-            certificate.keccak(pubKeyAlgoIdPtr.content(), pubKeyAlgoIdPtr.length()) == EC_PUB_KEY_OID,
-            "invalid cert algo id"
-        );
-        require(
-            certificate.keccak(algoParamsPtr.content(), algoParamsPtr.length()) == SECP_384_R1_OID,
-            "invalid cert algo param"
-        );
-
-        uint256 end = subjectPubKeyPtr.content() + subjectPubKeyPtr.length();
-        subjectPubKey = certificate.slice(end - 96, end);
-    }
-
-    function _verifyValidity(bytes memory certificate, NodePtr validityPtr) internal view returns (uint256 notAfter) {
-        NodePtr notBeforePtr = certificate.firstChildOf(validityPtr);
-        NodePtr notAfterPtr = certificate.nextSiblingOf(notBeforePtr);
-
-        uint256 notBefore = certificate.timestampAt(notBeforePtr);
-        notAfter = certificate.timestampAt(notAfterPtr);
-
-        require(notBefore <= block.timestamp, "certificate not valid yet");
-        require(notAfter >= block.timestamp, "certificate not valid anymore");
-    }
-
-    function _verifyExtensions(bytes memory certificate, NodePtr extensionsPtr, bool clientCert)
-        internal
-        pure
-        returns (int256 maxPathLen)
-    {
-        require(certificate[extensionsPtr.header()] == 0xa3, "invalid extensions");
-        extensionsPtr = certificate.firstChildOf(extensionsPtr);
-        NodePtr extensionPtr = certificate.firstChildOf(extensionsPtr);
-        uint256 end = extensionsPtr.content() + extensionsPtr.length();
-        bool basicConstraintsFound = false;
-        bool keyUsageFound = false;
-        maxPathLen = -1;
-
-        while (true) {
-            NodePtr oidPtr = certificate.firstChildOf(extensionPtr);
-            bytes32 oid = certificate.keccak(oidPtr.content(), oidPtr.length());
-
-            if (oid == BASIC_CONSTRAINTS_OID || oid == KEY_USAGE_OID) {
-                NodePtr valuePtr = certificate.nextSiblingOf(oidPtr);
-
-                if (certificate[valuePtr.header()] == 0x01) {
-                    // skip optional critical bool
-                    require(valuePtr.length() == 1, "invalid critical bool value");
-                    valuePtr = certificate.nextSiblingOf(valuePtr);
+        Ptrs memory ptrs;
+        uint256 offset = payloadMap.content();
+        uint256 end = payload.content() + payload.length();
+        while (offset < end) {
+            NodePtr key = _readNextElement(attestationTbs, offset);
+            require(key.header() == 0x60, "invalid attestation key type");
+            bytes32 keyHash = attestationTbs.keccak(key.content(), key.length());
+            NodePtr value = _readNextElement(attestationTbs, key.content() + key.length());
+            if (keyHash == MODULE_ID_KEY) {
+                require(value.header() == 0x60, "invalid module_id type");
+                ptrs.moduleID = value;
+                offset = value.content() + value.length();
+            } else if (keyHash == DIGEST_KEY) {
+                require(value.header() == 0x60, "invalid digest type");
+                ptrs.digest = value;
+                offset = value.content() + value.length();
+            } else if (keyHash == CERTIFICATE_KEY) {
+                require(value.header() == 0x40, "invalid cert type");
+                ptrs.cert = value;
+                offset = value.content() + value.length();
+            } else if (keyHash == PUBLIC_KEY_KEY) {
+                ptrs.publicKey = value;
+                offset = value.content() + value.length();
+            } else if (keyHash == USER_DATA_KEY) {
+                ptrs.userData = value;
+                offset = value.content() + value.length();
+            } else if (keyHash == NONCE_KEY) {
+                ptrs.nonce = value;
+                offset = value.content() + value.length();
+            } else if (keyHash == TIMESTAMP_KEY) {
+                require(value.header() == 0x00, "invalid timestamp type");
+                ptrs.timestamp = uint64(value.length());
+                offset = value.content();
+            } else if (keyHash == CABUNDLE_KEY) {
+                require(value.header() == 0x80, "invalid cabundle type");
+                offset = value.content();
+                ptrs.cabundle = new NodePtr[](value.length());
+                for (uint256 i = 0; i < value.length(); i++) {
+                    NodePtr cert = _readNextElement(attestationTbs, offset);
+                    require(cert.header() == 0x40, "invalid cert type");
+                    ptrs.cabundle[i] = cert;
+                    offset = cert.content() + cert.length();
                 }
-
-                valuePtr = certificate.octetString(valuePtr);
-
-                if (oid == BASIC_CONSTRAINTS_OID) {
-                    basicConstraintsFound = true;
-                    maxPathLen = _verifyBasicConstraintsExtension(certificate, valuePtr);
-                } else {
-                    keyUsageFound = true;
-                    _verifyKeyUsageExtension(certificate, valuePtr, clientCert);
+            } else if (keyHash == PCRS_KEY) {
+                require(value.header() == 0xa0, "invalid pcrs type");
+                offset = value.content();
+                ptrs.pcrs = new NodePtr[](value.length());
+                for (uint256 i = 0; i < value.length(); i++) {
+                    key = _readNextElement(attestationTbs, offset);
+                    require(key.header() == 0x00, "invalid pcr key type");
+                    require(key.length() < value.length(), "invalid pcr key value");
+                    require(NodePtr.unwrap(ptrs.pcrs[key.length()]) == 0, "duplicate pcr key");
+                    NodePtr pcr = _readNextElement(attestationTbs, key.content());
+                    require(pcr.header() == 0x40, "invalid pcr type");
+                    ptrs.pcrs[key.length()] = pcr;
+                    offset = pcr.content() + pcr.length();
                 }
+            } else {
+                revert("invalid attestation key");
             }
-
-            if (extensionPtr.content() + extensionPtr.length() == end) {
-                break;
-            }
-            extensionPtr = certificate.nextSiblingOf(extensionPtr);
         }
 
-        require(basicConstraintsFound, "basicConstraints not found");
-        require(keyUsageFound, "keyUsage not found");
-        require(!clientCert || maxPathLen == -1, "maxPathLen must be undefined for client cert");
+        return ptrs;
     }
 
-    function _verifyBasicConstraintsExtension(bytes memory certificate, NodePtr valuePtr)
-        internal
-        pure
-        returns (int256 maxPathLen)
-    {
-        maxPathLen = -1;
-        NodePtr basicConstraintsPtr = certificate.firstChildOf(valuePtr);
-        if (certificate[basicConstraintsPtr.header()] == 0x01) {
-            // skip optional isCA bool
-            require(basicConstraintsPtr.length() == 1, "invalid isCA bool value");
-            basicConstraintsPtr = certificate.nextSiblingOf(basicConstraintsPtr);
+    function _readNextElement(bytes memory cbor, uint256 ix) internal pure returns (NodePtr) {
+        uint256 _type = uint256(uint8(cbor[ix] & 0xe0));
+        uint256 length = uint256(uint8(cbor[ix] & 0x1f));
+        uint256 header = 1;
+        if (length == 24) {
+            length = uint8(cbor[ix + 1]);
+            header = 2;
+        } else if (length == 25) {
+            length = cbor.readUint16(ix + 1);
+            header = 3;
+        } else if (length == 26) {
+            length = cbor.readUint32(ix + 1);
+            header = 5;
+        } else if (length == 27) {
+            length = cbor.readUint64(ix + 1);
+            header = 9;
         }
-        if (certificate[basicConstraintsPtr.header()] == 0x02) {
-            maxPathLen = int256(certificate.uintAt(basicConstraintsPtr));
-        }
-    }
-
-    function _verifyKeyUsageExtension(bytes memory certificate, NodePtr valuePtr, bool clientCert) internal pure {
-        uint256 value = certificate.bitstringUintAt(valuePtr);
-        // bits are reversed (DigitalSignature 0x01 => 0x80, CertSign 0x32 => 0x04)
-        if (clientCert) {
-            require(value & 0x80 == 0x80, "DigitalSignature must be present");
-        } else {
-            require(value & 0x04 == 0x04, "CertSign must be present");
-        }
-    }
-
-    function _verifyCertSignature(bytes memory certificate, NodePtr ptr, bytes memory pubKey) internal view {
-        NodePtr sigAlgoPtr = certificate.nextSiblingOf(ptr);
-        require(certificate.keccak(sigAlgoPtr.content(), sigAlgoPtr.length()) == CERT_ALGO_OID, "invalid cert sig algo");
-
-        bytes memory hash = Sha2Ext.sha384(certificate, ptr.header(), ptr.totalLength());
-
-        NodePtr sigPtr = certificate.nextSiblingOf(sigAlgoPtr);
-        NodePtr sigBPtr = certificate.bitstring(sigPtr);
-        NodePtr sigRoot = certificate.rootOf(sigBPtr);
-        NodePtr sigRPtr = certificate.firstChildOf(sigRoot);
-        NodePtr sigSPtr = certificate.nextSiblingOf(sigRPtr);
-        (uint128 rhi, uint256 rlo) = certificate.uint384At(sigRPtr);
-        (uint128 shi, uint256 slo) = certificate.uint384At(sigSPtr);
-        bytes memory sigPacked = abi.encodePacked(rhi, rlo, shi, slo);
-
-        _verifySignature(pubKey, hash, sigPacked);
+        return LibNodePtr.toNodePtr(_type, ix + header, length);
     }
 
     function _verifySignature(bytes memory pubKey, bytes memory hash, bytes memory sig) internal view {

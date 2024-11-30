@@ -61,10 +61,7 @@ contract NitroValidator {
         certManager = _certManager;
     }
 
-    function validateAttestation(bytes memory attestationTbs, bytes memory signature)
-        external
-        returns (Ptrs memory)
-    {
+    function validateAttestation(bytes memory attestationTbs, bytes memory signature) external returns (Ptrs memory) {
         Ptrs memory ptrs = _parseAttestation(attestationTbs);
 
         require(ptrs.moduleID.length() > 0, "no module id");
@@ -91,7 +88,8 @@ contract NitroValidator {
         bytes memory cert = attestationTbs.slice(ptrs.cert.content(), ptrs.cert.content() + ptrs.cert.length());
         bytes[] memory cabundle = new bytes[](ptrs.cabundle.length);
         for (uint256 i = 0; i < ptrs.cabundle.length; i++) {
-            cabundle[i] = attestationTbs.slice(ptrs.cabundle[i].content(), ptrs.cabundle[i].content() + ptrs.cabundle[i].length());
+            cabundle[i] =
+                attestationTbs.slice(ptrs.cabundle[i].content(), ptrs.cabundle[i].content() + ptrs.cabundle[i].length());
         }
 
         CertManager.CachedCert memory parent = certManager.verifyCertBundle(cert, cabundle);

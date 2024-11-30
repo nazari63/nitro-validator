@@ -61,7 +61,7 @@ contract NitroValidator {
         certManager = _certManager;
     }
 
-    function validateAttestation(bytes memory attestationTbs, bytes memory signature) external returns (Ptrs memory) {
+    function validateAttestation(bytes memory attestationTbs, bytes memory signature) public returns (Ptrs memory) {
         Ptrs memory ptrs = _parseAttestation(attestationTbs);
 
         require(ptrs.moduleID.length() > 0, "no module id");

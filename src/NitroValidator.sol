@@ -61,6 +61,62 @@ contract NitroValidator {
         certManager = _certManager;
     }
 
+    function decodeAttestationTbs(bytes memory attestation)
+        external
+        view
+        returns (bytes memory attestationTbs, bytes memory signature)
+    {
+        uint256 offset = 1;
+        if (attestation[0] == 0xD2) {
+            offset = 2;
+        }
+
+        NodePtr protectedPtr = _readNextElement(attestation, offset);
+        NodePtr unprotectedPtr = _readNextElement(attestation, protectedPtr.content() + protectedPtr.length());
+        NodePtr payloadPtr = _readNextElement(attestation, unprotectedPtr.content() + unprotectedPtr.length());
+        NodePtr signaturePtr = _readNextElement(attestation, payloadPtr.content() + payloadPtr.length());
+
+        uint256 rawProtectedLength = protectedPtr.content() + protectedPtr.length() - offset;
+        uint256 rawPayloadLength =
+            payloadPtr.content() + payloadPtr.length() - unprotectedPtr.content() - unprotectedPtr.length();
+        bytes memory rawProtectedBytes = attestation.slice(offset, offset + rawProtectedLength);
+        bytes memory rawPayloadBytes = attestation.slice(
+            unprotectedPtr.content() + unprotectedPtr.length(),
+            unprotectedPtr.content() + unprotectedPtr.length() + rawPayloadLength
+        );
+        signature = attestation.slice(signaturePtr.content(), signaturePtr.content() + signaturePtr.length());
+        attestationTbs =
+            _constructAttestationTbs(rawProtectedBytes, rawProtectedLength, rawPayloadBytes, rawPayloadLength);
+    }
+
+    function _constructAttestationTbs(
+        bytes memory rawProtectedBytes,
+        uint256 rawProtectedLength,
+        bytes memory rawPayloadBytes,
+        uint256 rawPayloadLength
+    ) internal pure returns (bytes memory attestationTbs) {
+        attestationTbs = new bytes(13 + rawProtectedLength + rawPayloadLength);
+        attestationTbs[0] = bytes1(uint8(4 << 5 | 4)); // Outer: 4-length array
+        attestationTbs[1] = bytes1(uint8(3 << 5 | 10)); // Context: 10-length string
+        attestationTbs[12 + rawProtectedLength] = bytes1(uint8(2 << 5)); // ExternalAAD: 0-length bytes
+
+        string memory sig = "Signature1";
+        uint256 dest;
+        uint256 sigSrc;
+        uint256 protectedSrc;
+        uint256 payloadSrc;
+        assembly {
+            dest := add(attestationTbs, 32)
+            sigSrc := add(sig, 32)
+            protectedSrc := add(rawProtectedBytes, 32)
+            payloadSrc := add(rawPayloadBytes, 32)
+        }
+
+        LibBytes.memcpy(dest + 2, sigSrc, 10);
+        LibBytes.memcpy(dest + 12, protectedSrc, rawProtectedLength);
+        LibBytes.memcpy(dest + 13 + rawProtectedLength, payloadSrc, rawPayloadLength);
+    }
+
     function validateAttestation(bytes memory attestationTbs, bytes memory signature) public returns (Ptrs memory) {
         Ptrs memory ptrs = _parseAttestation(attestationTbs);
 

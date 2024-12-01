@@ -51,7 +51,7 @@ library LibBytes {
         return uint64(result);
     }
 
-    function memcpy(uint256 dest, uint256 src, uint256 len) private pure {
+    function memcpy(uint256 dest, uint256 src, uint256 len) internal pure {
         // Copy word-length chunks while possible
         for (; len >= 32; len -= 32) {
             assembly {

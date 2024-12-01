@@ -8,19 +8,18 @@ library LibBytes {
         }
     }
 
-    function slice(bytes memory b, uint256 from, uint256 to) internal pure returns (bytes memory result) {
-        require(from <= to, "from greater than to");
-        require(to <= b.length, "index out of bounds");
+    function slice(bytes memory b, uint256 offset, uint256 length) internal pure returns (bytes memory result) {
+        require(offset + length <= b.length, "index out of bounds");
 
         // Create a new bytes structure and copy contents
-        result = new bytes(to - from);
+        result = new bytes(length);
         uint256 dest;
         uint256 src;
         assembly {
             dest := add(result, 32)
-            src := add(b, add(32, from))
+            src := add(b, add(32, offset))
         }
-        memcpy(dest, src, result.length);
+        memcpy(dest, src, length);
         return result;
     }
 

@@ -176,7 +176,7 @@ contract CertManager {
         );
 
         uint256 end = subjectPubKeyPtr.content() + subjectPubKeyPtr.length();
-        subjectPubKey = certificate.slice(end - 96, end);
+        subjectPubKey = certificate.slice(end - 96, 96);
     }
 
     function _verifyValidity(bytes memory certificate, NodePtr validityPtr) internal view returns (uint256 notAfter) {

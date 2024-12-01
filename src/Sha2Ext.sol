@@ -182,7 +182,7 @@ library Sha2Ext {
             paddingLength = 247 - mdi;
         }
         bytes memory padding = new bytes(paddingLength);
-        bytes memory tail = message.slice(offset + length - mdi, offset + length);
+        bytes memory tail = message.slice(offset + length - mdi, mdi);
         return abi.encodePacked(tail, bytes1(0x80), padding, bitLength);
     }
 

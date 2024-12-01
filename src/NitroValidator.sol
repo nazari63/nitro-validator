@@ -63,7 +63,7 @@ contract NitroValidator {
 
     function decodeAttestationTbs(bytes memory attestation)
         external
-        view
+        pure
         returns (bytes memory attestationTbs, bytes memory signature)
     {
         uint256 offset = 1;
@@ -79,12 +79,10 @@ contract NitroValidator {
         uint256 rawProtectedLength = protectedPtr.content() + protectedPtr.length() - offset;
         uint256 rawPayloadLength =
             payloadPtr.content() + payloadPtr.length() - unprotectedPtr.content() - unprotectedPtr.length();
-        bytes memory rawProtectedBytes = attestation.slice(offset, offset + rawProtectedLength);
-        bytes memory rawPayloadBytes = attestation.slice(
-            unprotectedPtr.content() + unprotectedPtr.length(),
-            unprotectedPtr.content() + unprotectedPtr.length() + rawPayloadLength
-        );
-        signature = attestation.slice(signaturePtr.content(), signaturePtr.content() + signaturePtr.length());
+        bytes memory rawProtectedBytes = attestation.slice(offset, rawProtectedLength);
+        bytes memory rawPayloadBytes =
+            attestation.slice(unprotectedPtr.content() + unprotectedPtr.length(), rawPayloadLength);
+        signature = attestation.slice(signaturePtr.content(), signaturePtr.length());
         attestationTbs =
             _constructAttestationTbs(rawProtectedBytes, rawProtectedLength, rawPayloadBytes, rawPayloadLength);
     }
@@ -141,11 +139,10 @@ contract NitroValidator {
             "invalid nonce"
         );
 
-        bytes memory cert = attestationTbs.slice(ptrs.cert.content(), ptrs.cert.content() + ptrs.cert.length());
+        bytes memory cert = attestationTbs.slice(ptrs.cert.content(), ptrs.cert.length());
         bytes[] memory cabundle = new bytes[](ptrs.cabundle.length);
         for (uint256 i = 0; i < ptrs.cabundle.length; i++) {
-            cabundle[i] =
-                attestationTbs.slice(ptrs.cabundle[i].content(), ptrs.cabundle[i].content() + ptrs.cabundle[i].length());
+            cabundle[i] = attestationTbs.slice(ptrs.cabundle[i].content(), ptrs.cabundle[i].length());
         }
 
         CertManager.CachedCert memory parent = certManager.verifyCertBundle(cert, cabundle);

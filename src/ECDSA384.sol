@@ -14,6 +14,20 @@ pragma solidity ^0.8.15;
 library ECDSA384 {
     using U384 for *;
 
+    // ECDSA384 curve parameters (NIST P-384)
+    bytes public constant CURVE_A =
+        hex"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000fffffffc";
+    bytes public constant CURVE_B =
+        hex"b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef";
+    bytes public constant CURVE_GX =
+        hex"aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7";
+    bytes public constant CURVE_GY =
+        hex"3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f";
+    bytes public constant CURVE_P =
+        hex"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff";
+    bytes public constant CURVE_N =
+        hex"ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973";
+
     /**
      * @notice 384-bit curve parameters.
      */
@@ -24,7 +38,6 @@ library ECDSA384 {
         bytes gy;
         bytes p;
         bytes n;
-        bytes lowSmax;
     }
 
     struct _Parameters {
@@ -34,7 +47,6 @@ library ECDSA384 {
         uint256 gy;
         uint256 p;
         uint256 n;
-        uint256 lowSmax;
     }
 
     struct _Inputs {
@@ -46,7 +58,7 @@ library ECDSA384 {
 
     /**
      * @notice The function to verify the ECDSA signature
-     * @param curveParams_ the 384-bit curve parameters. `lowSmax` is `n / 2`.
+     * @param curveParams_ the 384-bit curve parameters.
      * @param hashedMessage_ the already hashed message to be verified.
      * @param signature_ the ECDSA signature. Equals to `bytes(r) + bytes(s)`.
      * @param pubKey_ the full public key of a signer. Equals to `bytes(x) + bytes(y)`.
@@ -71,15 +83,10 @@ library ECDSA384 {
                 gx: curveParams_.gx.init(),
                 gy: curveParams_.gy.init(),
                 p: curveParams_.p.init(),
-                n: curveParams_.n.init(),
-                lowSmax: curveParams_.lowSmax.init()
+                n: curveParams_.n.init()
             });
 
-            if (
-                U384.eqInteger(inputs_.r, 0) ||
-                U384.cmp(inputs_.r, params_.n) >= 0 ||
-                U384.eqInteger(inputs_.s, 0)
-            ) {
+            if (U384.eqInteger(inputs_.r, 0) || U384.cmp(inputs_.r, params_.n) >= 0 || U384.eqInteger(inputs_.s, 0)) {
                 return false;
             }
 

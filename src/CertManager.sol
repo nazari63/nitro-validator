@@ -35,22 +35,6 @@ contract CertManager is ICertManager {
     bytes32 public constant BASIC_CONSTRAINTS_OID = keccak256(hex"551d13");
     bytes32 public constant KEY_USAGE_OID = keccak256(hex"551d0f");
 
-    // ECDSA384 curve parameters (NIST P-384)
-    bytes public constant CURVE_A =
-        hex"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000fffffffc";
-    bytes public constant CURVE_B =
-        hex"b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef";
-    bytes public constant CURVE_GX =
-        hex"aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7";
-    bytes public constant CURVE_GY =
-        hex"3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f";
-    bytes public constant CURVE_P =
-        hex"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff";
-    bytes public constant CURVE_N =
-        hex"ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973";
-    bytes public constant CURVE_LOW_S_MAX =
-        hex"7fffffffffffffffffffffffffffffffffffffffffffffffe3b1a6c0fa1b96efac0d06d9245853bd76760cb5666294b9";
-
     // certHash -> CachedCert
     mapping(bytes32 => bytes) public verified;
 
@@ -279,13 +263,12 @@ contract CertManager is ICertManager {
 
     function _verifySignature(bytes memory pubKey, bytes memory hash, bytes memory sig) internal view {
         ECDSA384.Parameters memory CURVE_PARAMETERS = ECDSA384.Parameters({
-            a: CURVE_A,
-            b: CURVE_B,
-            gx: CURVE_GX,
-            gy: CURVE_GY,
-            p: CURVE_P,
-            n: CURVE_N,
-            lowSmax: CURVE_LOW_S_MAX
+            a: ECDSA384.CURVE_A,
+            b: ECDSA384.CURVE_B,
+            gx: ECDSA384.CURVE_GX,
+            gy: ECDSA384.CURVE_GY,
+            p: ECDSA384.CURVE_P,
+            n: ECDSA384.CURVE_N
         });
         require(ECDSA384.verify(CURVE_PARAMETERS, hash, sig, pubKey), "invalid sig");
     }

@@ -3,16 +3,19 @@ pragma solidity ^0.8.15;
 
 import {CertManager} from "./CertManager.sol";
 import {Sha2Ext} from "./Sha2Ext.sol";
+import {CborDecode, CborElement, LibCborElement} from "./CborDecode.sol";
 import {Asn1Decode} from "./Asn1Decode.sol";
 import {ECDSA384} from "./ECDSA384.sol";
 import {LibBytes} from "./LibBytes.sol";
-import {NodePtr, LibNodePtr} from "./NodePtr.sol";
+
+import {console} from "forge-std/console.sol";
 
 // adapted from https://github.com/marlinprotocol/NitroProver/blob/f1d368d1f172ad3a55cd2aaaa98ad6a6e7dcde9d/src/NitroProver.sol
 
 contract NitroValidator {
     using LibBytes for bytes;
-    using LibNodePtr for NodePtr;
+    using CborDecode for bytes;
+    using LibCborElement for CborElement;
 
     bytes32 public constant ATTESTATION_TBS_PREFIX = keccak256(hex"846a5369676e61747572653144a101382240");
     bytes32 public constant ATTESTATION_DIGEST = keccak256("SHA384");
@@ -44,15 +47,15 @@ contract NitroValidator {
         hex"7fffffffffffffffffffffffffffffffffffffffffffffffe3b1a6c0fa1b96efac0d06d9245853bd76760cb5666294b9";
 
     struct Ptrs {
-        NodePtr moduleID;
+        CborElement moduleID;
         uint64 timestamp;
-        NodePtr digest;
-        NodePtr[] pcrs;
-        NodePtr cert;
-        NodePtr[] cabundle;
-        NodePtr publicKey;
-        NodePtr userData;
-        NodePtr nonce;
+        CborElement digest;
+        CborElement[] pcrs;
+        CborElement cert;
+        CborElement[] cabundle;
+        CborElement publicKey;
+        CborElement userData;
+        CborElement nonce;
     }
 
     CertManager public immutable certManager;
@@ -71,20 +74,46 @@ contract NitroValidator {
             offset = 2;
         }
 
-        NodePtr protectedPtr = _readNextElement(attestation, offset);
-        NodePtr unprotectedPtr = _readNextElement(attestation, protectedPtr.content() + protectedPtr.length());
-        NodePtr payloadPtr = _readNextElement(attestation, unprotectedPtr.content() + unprotectedPtr.length());
-        NodePtr signaturePtr = _readNextElement(attestation, payloadPtr.content() + payloadPtr.length());
+        CborElement protectedPtr = attestation.byteStringAt(offset);
+        CborElement unprotectedPtr = attestation.nextMap(protectedPtr);
+        CborElement payloadPtr = attestation.nextByteString(unprotectedPtr);
+        CborElement signaturePtr = attestation.nextByteString(payloadPtr);
 
-        uint256 rawProtectedLength = protectedPtr.content() + protectedPtr.length() - offset;
-        uint256 rawPayloadLength =
-            payloadPtr.content() + payloadPtr.length() - unprotectedPtr.content() - unprotectedPtr.length();
+        uint256 rawProtectedLength = protectedPtr.end() - offset;
+        uint256 rawPayloadLength = payloadPtr.end() - unprotectedPtr.end();
         bytes memory rawProtectedBytes = attestation.slice(offset, rawProtectedLength);
-        bytes memory rawPayloadBytes =
-            attestation.slice(unprotectedPtr.content() + unprotectedPtr.length(), rawPayloadLength);
-        signature = attestation.slice(signaturePtr.content(), signaturePtr.length());
+        bytes memory rawPayloadBytes = attestation.slice(unprotectedPtr.end(), rawPayloadLength);
         attestationTbs =
             _constructAttestationTbs(rawProtectedBytes, rawProtectedLength, rawPayloadBytes, rawPayloadLength);
+        signature = attestation.slice(signaturePtr.start(), signaturePtr.length());
+    }
+
+    function validateAttestation(bytes memory attestationTbs, bytes memory signature) public returns (Ptrs memory) {
+        Ptrs memory ptrs = _parseAttestation(attestationTbs);
+
+        require(ptrs.moduleID.length() > 0, "no module id");
+        require(ptrs.timestamp > 0, "no timestamp");
+        require(ptrs.cabundle.length > 0, "no cabundle");
+        require(attestationTbs.keccak(ptrs.digest) == ATTESTATION_DIGEST, "invalid digest");
+        require(1 <= ptrs.pcrs.length && ptrs.pcrs.length <= 32, "invalid pcrs");
+        require(
+            ptrs.publicKey.isNull() || (1 <= ptrs.publicKey.length() && ptrs.publicKey.length() <= 1024),
+            "invalid pub key"
+        );
+        require(ptrs.userData.isNull() || (ptrs.userData.length() <= 512), "invalid user data");
+        require(ptrs.nonce.isNull() || (ptrs.nonce.length() <= 512), "invalid nonce");
+
+        bytes memory cert = attestationTbs.slice(ptrs.cert);
+        bytes[] memory cabundle = new bytes[](ptrs.cabundle.length);
+        for (uint256 i = 0; i < ptrs.cabundle.length; i++) {
+            cabundle[i] = attestationTbs.slice(ptrs.cabundle[i]);
+        }
+
+        CertManager.CachedCert memory parent = certManager.verifyCertBundle(cert, cabundle);
+        bytes memory hash = Sha2Ext.sha384(attestationTbs, 0, attestationTbs.length);
+        _verifySignature(parent.pubKey, hash, signature);
+
+        return ptrs;
     }
 
     function _constructAttestationTbs(
@@ -115,107 +144,55 @@ contract NitroValidator {
         LibBytes.memcpy(dest + 13 + rawProtectedLength, payloadSrc, rawPayloadLength);
     }
 
-    function validateAttestation(bytes memory attestationTbs, bytes memory signature) public returns (Ptrs memory) {
-        Ptrs memory ptrs = _parseAttestation(attestationTbs);
-
-        require(ptrs.moduleID.length() > 0, "no module id");
-        require(ptrs.timestamp > 0, "no timestamp");
-        require(ptrs.cabundle.length > 0, "no cabundle");
-        require(
-            attestationTbs.keccak(ptrs.digest.content(), ptrs.digest.length()) == ATTESTATION_DIGEST, "invalid digest"
-        );
-        require(1 <= ptrs.pcrs.length && ptrs.pcrs.length <= 32, "invalid pcrs");
-        require(
-            attestationTbs[ptrs.publicKey.header()] == Asn1Decode.NULL_VALUE
-                || (1 <= ptrs.publicKey.length() && ptrs.publicKey.length() <= 1024),
-            "invalid pub key"
-        );
-        require(
-            attestationTbs[ptrs.userData.header()] == Asn1Decode.NULL_VALUE || (ptrs.userData.length() <= 512),
-            "invalid user data"
-        );
-        require(
-            attestationTbs[ptrs.nonce.header()] == Asn1Decode.NULL_VALUE || (ptrs.nonce.length() <= 512),
-            "invalid nonce"
-        );
-
-        bytes memory cert = attestationTbs.slice(ptrs.cert.content(), ptrs.cert.length());
-        bytes[] memory cabundle = new bytes[](ptrs.cabundle.length);
-        for (uint256 i = 0; i < ptrs.cabundle.length; i++) {
-            cabundle[i] = attestationTbs.slice(ptrs.cabundle[i].content(), ptrs.cabundle[i].length());
-        }
-
-        CertManager.CachedCert memory parent = certManager.verifyCertBundle(cert, cabundle);
-        bytes memory hash = Sha2Ext.sha384(attestationTbs, 0, attestationTbs.length);
-        _verifySignature(parent.pubKey, hash, signature);
-
-        return ptrs;
-    }
-
     function _parseAttestation(bytes memory attestationTbs) internal pure returns (Ptrs memory) {
         require(attestationTbs.keccak(0, 18) == ATTESTATION_TBS_PREFIX, "invalid attestation prefix");
 
-        NodePtr payload = _readNextElement(attestationTbs, 18);
-        require(payload.header() == 0x40, "invalid attestation payload type");
-        NodePtr payloadMap = _readNextElement(attestationTbs, payload.content());
-        require(payloadMap.header() == 0xa0, "invalid attestation payload map type");
+        CborElement payload = attestationTbs.byteStringAt(18);
+        CborElement current = attestationTbs.mapAt(payload.start());
 
         Ptrs memory ptrs;
-        uint256 offset = payloadMap.content();
-        uint256 end = payload.content() + payload.length();
-        while (offset < end) {
-            NodePtr key = _readNextElement(attestationTbs, offset);
-            require(key.header() == 0x60, "invalid attestation key type");
-            bytes32 keyHash = attestationTbs.keccak(key.content(), key.length());
-            NodePtr value = _readNextElement(attestationTbs, key.content() + key.length());
+        uint256 end = payload.end();
+        while (current.end() < end) {
+            current = attestationTbs.nextTextString(current);
+            bytes32 keyHash = attestationTbs.keccak(current);
             if (keyHash == MODULE_ID_KEY) {
-                require(value.header() == 0x60, "invalid module_id type");
-                ptrs.moduleID = value;
-                offset = value.content() + value.length();
+                current = attestationTbs.nextTextString(current);
+                ptrs.moduleID = current;
             } else if (keyHash == DIGEST_KEY) {
-                require(value.header() == 0x60, "invalid digest type");
-                ptrs.digest = value;
-                offset = value.content() + value.length();
+                current = attestationTbs.nextTextString(current);
+                ptrs.digest = current;
             } else if (keyHash == CERTIFICATE_KEY) {
-                require(value.header() == 0x40, "invalid cert type");
-                ptrs.cert = value;
-                offset = value.content() + value.length();
+                current = attestationTbs.nextByteString(current);
+                ptrs.cert = current;
             } else if (keyHash == PUBLIC_KEY_KEY) {
-                ptrs.publicKey = value;
-                offset = value.content() + value.length();
+                current = attestationTbs.nextByteStringOrNull(current);
+                ptrs.publicKey = current;
             } else if (keyHash == USER_DATA_KEY) {
-                ptrs.userData = value;
-                offset = value.content() + value.length();
+                current = attestationTbs.nextByteStringOrNull(current);
+                ptrs.userData = current;
             } else if (keyHash == NONCE_KEY) {
-                ptrs.nonce = value;
-                offset = value.content() + value.length();
+                current = attestationTbs.nextByteStringOrNull(current);
+                ptrs.nonce = current;
             } else if (keyHash == TIMESTAMP_KEY) {
-                require(value.header() == 0x00, "invalid timestamp type");
-                ptrs.timestamp = uint64(value.length());
-                offset = value.content();
+                current = attestationTbs.nextPositiveInt(current);
+                ptrs.timestamp = uint64(current.value());
             } else if (keyHash == CABUNDLE_KEY) {
-                require(value.header() == 0x80, "invalid cabundle type");
-                offset = value.content();
-                ptrs.cabundle = new NodePtr[](value.length());
-                for (uint256 i = 0; i < value.length(); i++) {
-                    NodePtr cert = _readNextElement(attestationTbs, offset);
-                    require(cert.header() == 0x40, "invalid cert type");
-                    ptrs.cabundle[i] = cert;
-                    offset = cert.content() + cert.length();
+                current = attestationTbs.nextArray(current);
+                ptrs.cabundle = new CborElement[](current.value());
+                for (uint256 i = 0; i < ptrs.cabundle.length; i++) {
+                    current = attestationTbs.nextByteString(current);
+                    ptrs.cabundle[i] = current;
                 }
             } else if (keyHash == PCRS_KEY) {
-                require(value.header() == 0xa0, "invalid pcrs type");
-                offset = value.content();
-                ptrs.pcrs = new NodePtr[](value.length());
-                for (uint256 i = 0; i < value.length(); i++) {
-                    key = _readNextElement(attestationTbs, offset);
-                    require(key.header() == 0x00, "invalid pcr key type");
-                    require(key.length() < value.length(), "invalid pcr key value");
-                    require(NodePtr.unwrap(ptrs.pcrs[key.length()]) == 0, "duplicate pcr key");
-                    NodePtr pcr = _readNextElement(attestationTbs, key.content());
-                    require(pcr.header() == 0x40, "invalid pcr type");
-                    ptrs.pcrs[key.length()] = pcr;
-                    offset = pcr.content() + pcr.length();
+                current = attestationTbs.nextMap(current);
+                ptrs.pcrs = new CborElement[](current.value());
+                for (uint256 i = 0; i < ptrs.pcrs.length; i++) {
+                    current = attestationTbs.nextPositiveInt(current);
+                    uint256 key = current.value();
+                    require(key < ptrs.pcrs.length, "invalid pcr key value");
+                    require(CborElement.unwrap(ptrs.pcrs[key]) == 0, "duplicate pcr key");
+                    current = attestationTbs.nextByteString(current);
+                    ptrs.pcrs[key] = current;
                 }
             } else {
                 revert("invalid attestation key");
@@ -223,26 +200,6 @@ contract NitroValidator {
         }
 
         return ptrs;
-    }
-
-    function _readNextElement(bytes memory cbor, uint256 ix) internal pure returns (NodePtr) {
-        uint256 _type = uint256(uint8(cbor[ix] & 0xe0));
-        uint256 length = uint256(uint8(cbor[ix] & 0x1f));
-        uint256 header = 1;
-        if (length == 24) {
-            length = uint8(cbor[ix + 1]);
-            header = 2;
-        } else if (length == 25) {
-            length = cbor.readUint16(ix + 1);
-            header = 3;
-        } else if (length == 26) {
-            length = cbor.readUint32(ix + 1);
-            header = 5;
-        } else if (length == 27) {
-            length = cbor.readUint64(ix + 1);
-            header = 9;
-        }
-        return LibNodePtr.toNodePtr(_type, ix + header, length);
     }
 
     function _verifySignature(bytes memory pubKey, bytes memory hash, bytes memory sig) internal view {

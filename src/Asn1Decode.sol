@@ -24,21 +24,49 @@ pragma solidity ^0.8.15;
 
 // adapted from https://github.com/JonahGroendal/asn1-decode/tree/master
 
-import {NodePtr, LibNodePtr} from "./NodePtr.sol";
 import {LibBytes} from "./LibBytes.sol";
 
-library Asn1Decode {
-    using LibNodePtr for NodePtr;
-    using LibBytes for bytes;
+type Asn1Ptr is uint256;
 
-    bytes1 public constant NULL_VALUE = 0xF6;
+library LibAsn1Ptr {
+    using LibAsn1Ptr for Asn1Ptr;
+
+    // First byte index of the header
+    function header(Asn1Ptr self) internal pure returns (uint256) {
+        return uint80(Asn1Ptr.unwrap(self));
+    }
+
+    // First byte index of the content
+    function content(Asn1Ptr self) internal pure returns (uint256) {
+        return uint80(Asn1Ptr.unwrap(self) >> 80);
+    }
+
+    // Content length
+    function length(Asn1Ptr self) internal pure returns (uint256) {
+        return uint80(Asn1Ptr.unwrap(self) >> 160);
+    }
+
+    // Total length (header length + content length)
+    function totalLength(Asn1Ptr self) internal pure returns (uint256) {
+        return self.length() + self.content() - self.header();
+    }
+
+    // Pack 3 uint80s into a uint256
+    function toAsn1Ptr(uint256 _header, uint256 _content, uint256 _length) internal pure returns (Asn1Ptr) {
+        return Asn1Ptr.wrap(_header | _content << 80 | _length << 160);
+    }
+}
+
+library Asn1Decode {
+    using LibAsn1Ptr for Asn1Ptr;
+    using LibBytes for bytes;
 
     /*
      * @dev Get the root node. First step in traversing an ASN1 structure
      * @param der The DER-encoded ASN1 structure
      * @return A pointer to the outermost node
      */
-    function root(bytes memory der) internal pure returns (NodePtr) {
+    function root(bytes memory der) internal pure returns (Asn1Ptr) {
         return readNodeLength(der, 0);
     }
 
@@ -48,7 +76,7 @@ library Asn1Decode {
      * @param ptr Pointer to the current node
      * @return A pointer to the child root node
      */
-    function rootOf(bytes memory der, NodePtr ptr) internal pure returns (NodePtr) {
+    function rootOf(bytes memory der, Asn1Ptr ptr) internal pure returns (Asn1Ptr) {
         return readNodeLength(der, ptr.content());
     }
 
@@ -58,7 +86,7 @@ library Asn1Decode {
      * @param ptr Points to the indices of the current node
      * @return A pointer to the next sibling node
      */
-    function nextSiblingOf(bytes memory der, NodePtr ptr) internal pure returns (NodePtr) {
+    function nextSiblingOf(bytes memory der, Asn1Ptr ptr) internal pure returns (Asn1Ptr) {
         return readNodeLength(der, ptr.content() + ptr.length());
     }
 
@@ -68,7 +96,7 @@ library Asn1Decode {
      * @param ptr Points to the indices of the current node
      * @return A pointer to the first child node
      */
-    function firstChildOf(bytes memory der, NodePtr ptr) internal pure returns (NodePtr) {
+    function firstChildOf(bytes memory der, Asn1Ptr ptr) internal pure returns (Asn1Ptr) {
         require(der[ptr.header()] & 0x20 == 0x20, "Not a constructed type");
         return readNodeLength(der, ptr.content());
     }
@@ -79,11 +107,11 @@ library Asn1Decode {
      * @param ptr Points to the indices of the current node
      * @return A pointer to a bitstring
      */
-    function bitstring(bytes memory der, NodePtr ptr) internal pure returns (NodePtr) {
+    function bitstring(bytes memory der, Asn1Ptr ptr) internal pure returns (Asn1Ptr) {
         require(der[ptr.header()] == 0x03, "Not type BIT STRING");
         // Only 00 padded bitstr can be converted to bytestr!
         require(der[ptr.content()] == 0x00, "Non-0-padded BIT STRING");
-        return LibNodePtr.toNodePtr(ptr.header(), ptr.content() + 1, ptr.length() - 1);
+        return LibAsn1Ptr.toAsn1Ptr(ptr.header(), ptr.content() + 1, ptr.length() - 1);
     }
 
     /*
@@ -92,7 +120,7 @@ library Asn1Decode {
      * @param ptr Points to the indices of the current node
      * @return A bitstring encoded in a uint256
      */
-    function bitstringUintAt(bytes memory der, NodePtr ptr) internal pure returns (uint256) {
+    function bitstringUintAt(bytes memory der, Asn1Ptr ptr) internal pure returns (uint256) {
         require(der[ptr.header()] == 0x03, "Not type BIT STRING");
         uint256 len = ptr.length() - 1;
         return uint256(readBytesN(der, ptr.content() + 1, len) >> ((32 - len) * 8));
@@ -104,7 +132,7 @@ library Asn1Decode {
      * @param ptr Points to the indices of the current node
      * @return A pointer to a octet string
      */
-    function octetString(bytes memory der, NodePtr ptr) internal pure returns (NodePtr) {
+    function octetString(bytes memory der, Asn1Ptr ptr) internal pure returns (Asn1Ptr) {
         require(der[ptr.header()] == 0x04, "Not type OCTET STRING");
         return readNodeLength(der, ptr.content());
     }
@@ -115,7 +143,7 @@ library Asn1Decode {
      * @param ptr Points to the indices of the current node
      * @return Uint value of node
      */
-    function uintAt(bytes memory der, NodePtr ptr) internal pure returns (uint256) {
+    function uintAt(bytes memory der, Asn1Ptr ptr) internal pure returns (uint256) {
         require(der[ptr.header()] == 0x02, "Not type INTEGER");
         require(der[ptr.content()] & 0x80 == 0, "Not positive");
         uint256 len = ptr.length();
@@ -128,7 +156,7 @@ library Asn1Decode {
      * @param ptr Points to the indices of the current node
      * @return 384-bit uint encoded in uint128 and uint256
      */
-    function uint384At(bytes memory der, NodePtr ptr) internal pure returns (uint128, uint256) {
+    function uint384At(bytes memory der, Asn1Ptr ptr) internal pure returns (uint128, uint256) {
         require(der[ptr.header()] == 0x02, "Not type INTEGER");
         require(der[ptr.content()] & 0x80 == 0, "Not positive");
         uint256 valueLength = ptr.length();
@@ -149,7 +177,7 @@ library Asn1Decode {
      * @param ptr Points to the indices of the current node
      * @return UNIX timestamp (seconds since 1970/01/01)
      */
-    function timestampAt(bytes memory der, NodePtr ptr) internal pure returns (uint256) {
+    function timestampAt(bytes memory der, Asn1Ptr ptr) internal pure returns (uint256) {
         uint16 _years;
         uint256 offset = ptr.content();
         uint256 length = ptr.length();
@@ -170,7 +198,7 @@ library Asn1Decode {
         return timestampFromDateTime(_years, _months, _days, _hours, _mins, _secs);
     }
 
-    function readNodeLength(bytes memory der, uint256 ix) private pure returns (NodePtr) {
+    function readNodeLength(bytes memory der, uint256 ix) private pure returns (Asn1Ptr) {
         uint256 length;
         uint80 ixFirstContentByte;
         if ((der[ix + 1] & 0x80) == 0) {
@@ -187,7 +215,7 @@ library Asn1Decode {
             }
             ixFirstContentByte = uint80(ix + 2 + lengthbytesLength);
         }
-        return LibNodePtr.toNodePtr(ix, ixFirstContentByte, uint80(length));
+        return LibAsn1Ptr.toAsn1Ptr(ix, ixFirstContentByte, uint80(length));
     }
 
     function readBytesN(bytes memory self, uint256 idx, uint256 len) private pure returns (bytes32 ret) {

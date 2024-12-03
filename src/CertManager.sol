@@ -2,17 +2,16 @@
 pragma solidity ^0.8.15;
 
 import {Sha2Ext} from "./Sha2Ext.sol";
-import {Asn1Decode} from "./Asn1Decode.sol";
+import {Asn1Decode, Asn1Ptr, LibAsn1Ptr} from "./Asn1Decode.sol";
 import {ECDSA384} from "./ECDSA384.sol";
 import {LibBytes} from "./LibBytes.sol";
-import {NodePtr, LibNodePtr} from "./NodePtr.sol";
 
 // adapted from https://github.com/marlinprotocol/NitroProver/blob/f1d368d1f172ad3a55cd2aaaa98ad6a6e7dcde9d/src/CertManager.sol
 
 contract CertManager {
     using Asn1Decode for bytes;
+    using LibAsn1Ptr for Asn1Ptr;
     using LibBytes for bytes;
-    using LibNodePtr for NodePtr;
 
     // @dev download the root CA cert for AWS nitro enclaves from https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip
     // @dev convert the base64 encoded pub key into hex to get the cert below
@@ -104,8 +103,8 @@ contract CertManager {
             return cache;
         }
 
-        NodePtr root = certificate.root();
-        NodePtr tbsCertPtr = certificate.firstChildOf(root);
+        Asn1Ptr root = certificate.root();
+        Asn1Ptr tbsCertPtr = certificate.firstChildOf(root);
         (uint256 notAfter, int256 maxPathLen, bytes memory pubKey) = _parseTbs(certificate, tbsCertPtr, clientCert);
 
         if (parentCache.pubKey.length != 0 || certHash != ROOT_CA_CERT_HASH) {
@@ -121,15 +120,15 @@ contract CertManager {
         return cache;
     }
 
-    function _parseTbs(bytes memory certificate, NodePtr ptr, bool clientCert)
+    function _parseTbs(bytes memory certificate, Asn1Ptr ptr, bool clientCert)
         internal
         view
         returns (uint256 notAfter, int256 maxPathLen, bytes memory pubKey)
     {
-        NodePtr versionPtr = certificate.firstChildOf(ptr);
-        NodePtr vPtr = certificate.firstChildOf(versionPtr);
-        NodePtr serialPtr = certificate.nextSiblingOf(versionPtr);
-        NodePtr sigAlgoPtr = certificate.nextSiblingOf(serialPtr);
+        Asn1Ptr versionPtr = certificate.firstChildOf(ptr);
+        Asn1Ptr vPtr = certificate.firstChildOf(versionPtr);
+        Asn1Ptr serialPtr = certificate.nextSiblingOf(versionPtr);
+        Asn1Ptr sigAlgoPtr = certificate.nextSiblingOf(serialPtr);
 
         require(certificate.keccak(sigAlgoPtr.content(), sigAlgoPtr.length()) == CERT_ALGO_OID, "invalid cert sig algo");
         uint256 version = certificate.uintAt(vPtr);
@@ -139,32 +138,32 @@ contract CertManager {
         (notAfter, maxPathLen, pubKey) = _parseTbsInner(certificate, sigAlgoPtr, clientCert);
     }
 
-    function _parseTbsInner(bytes memory certificate, NodePtr sigAlgoPtr, bool clientCert)
+    function _parseTbsInner(bytes memory certificate, Asn1Ptr sigAlgoPtr, bool clientCert)
         internal
         view
         returns (uint256 notAfter, int256 maxPathLen, bytes memory pubKey)
     {
-        NodePtr issuerPtr = certificate.nextSiblingOf(sigAlgoPtr);
-        NodePtr validityPtr = certificate.nextSiblingOf(issuerPtr);
-        NodePtr subjectPtr = certificate.nextSiblingOf(validityPtr);
-        NodePtr subjectPublicKeyInfoPtr = certificate.nextSiblingOf(subjectPtr);
-        NodePtr extensionsPtr = certificate.nextSiblingOf(subjectPublicKeyInfoPtr);
+        Asn1Ptr issuerPtr = certificate.nextSiblingOf(sigAlgoPtr);
+        Asn1Ptr validityPtr = certificate.nextSiblingOf(issuerPtr);
+        Asn1Ptr subjectPtr = certificate.nextSiblingOf(validityPtr);
+        Asn1Ptr subjectPublicKeyInfoPtr = certificate.nextSiblingOf(subjectPtr);
+        Asn1Ptr extensionsPtr = certificate.nextSiblingOf(subjectPublicKeyInfoPtr);
 
         notAfter = _verifyValidity(certificate, validityPtr);
         maxPathLen = _verifyExtensions(certificate, extensionsPtr, clientCert);
         pubKey = _parsePubKey(certificate, subjectPublicKeyInfoPtr);
     }
 
-    function _parsePubKey(bytes memory certificate, NodePtr subjectPublicKeyInfoPtr)
+    function _parsePubKey(bytes memory certificate, Asn1Ptr subjectPublicKeyInfoPtr)
         internal
         pure
         returns (bytes memory subjectPubKey)
     {
-        NodePtr pubKeyAlgoPtr = certificate.firstChildOf(subjectPublicKeyInfoPtr);
-        NodePtr pubKeyAlgoIdPtr = certificate.firstChildOf(pubKeyAlgoPtr);
-        NodePtr algoParamsPtr = certificate.nextSiblingOf(pubKeyAlgoIdPtr);
-        NodePtr subjectPublicKeyPtr = certificate.nextSiblingOf(pubKeyAlgoPtr);
-        NodePtr subjectPubKeyPtr = certificate.bitstring(subjectPublicKeyPtr);
+        Asn1Ptr pubKeyAlgoPtr = certificate.firstChildOf(subjectPublicKeyInfoPtr);
+        Asn1Ptr pubKeyAlgoIdPtr = certificate.firstChildOf(pubKeyAlgoPtr);
+        Asn1Ptr algoParamsPtr = certificate.nextSiblingOf(pubKeyAlgoIdPtr);
+        Asn1Ptr subjectPublicKeyPtr = certificate.nextSiblingOf(pubKeyAlgoPtr);
+        Asn1Ptr subjectPubKeyPtr = certificate.bitstring(subjectPublicKeyPtr);
 
         require(
             certificate.keccak(pubKeyAlgoIdPtr.content(), pubKeyAlgoIdPtr.length()) == EC_PUB_KEY_OID,
@@ -179,9 +178,9 @@ contract CertManager {
         subjectPubKey = certificate.slice(end - 96, 96);
     }
 
-    function _verifyValidity(bytes memory certificate, NodePtr validityPtr) internal view returns (uint256 notAfter) {
-        NodePtr notBeforePtr = certificate.firstChildOf(validityPtr);
-        NodePtr notAfterPtr = certificate.nextSiblingOf(notBeforePtr);
+    function _verifyValidity(bytes memory certificate, Asn1Ptr validityPtr) internal view returns (uint256 notAfter) {
+        Asn1Ptr notBeforePtr = certificate.firstChildOf(validityPtr);
+        Asn1Ptr notAfterPtr = certificate.nextSiblingOf(notBeforePtr);
 
         uint256 notBefore = certificate.timestampAt(notBeforePtr);
         notAfter = certificate.timestampAt(notAfterPtr);
@@ -190,25 +189,25 @@ contract CertManager {
         require(notAfter >= block.timestamp, "certificate not valid anymore");
     }
 
-    function _verifyExtensions(bytes memory certificate, NodePtr extensionsPtr, bool clientCert)
+    function _verifyExtensions(bytes memory certificate, Asn1Ptr extensionsPtr, bool clientCert)
         internal
         pure
         returns (int256 maxPathLen)
     {
         require(certificate[extensionsPtr.header()] == 0xa3, "invalid extensions");
         extensionsPtr = certificate.firstChildOf(extensionsPtr);
-        NodePtr extensionPtr = certificate.firstChildOf(extensionsPtr);
+        Asn1Ptr extensionPtr = certificate.firstChildOf(extensionsPtr);
         uint256 end = extensionsPtr.content() + extensionsPtr.length();
         bool basicConstraintsFound = false;
         bool keyUsageFound = false;
         maxPathLen = -1;
 
         while (true) {
-            NodePtr oidPtr = certificate.firstChildOf(extensionPtr);
+            Asn1Ptr oidPtr = certificate.firstChildOf(extensionPtr);
             bytes32 oid = certificate.keccak(oidPtr.content(), oidPtr.length());
 
             if (oid == BASIC_CONSTRAINTS_OID || oid == KEY_USAGE_OID) {
-                NodePtr valuePtr = certificate.nextSiblingOf(oidPtr);
+                Asn1Ptr valuePtr = certificate.nextSiblingOf(oidPtr);
 
                 if (certificate[valuePtr.header()] == 0x01) {
                     // skip optional critical bool
@@ -238,13 +237,13 @@ contract CertManager {
         require(!clientCert || maxPathLen == -1, "maxPathLen must be undefined for client cert");
     }
 
-    function _verifyBasicConstraintsExtension(bytes memory certificate, NodePtr valuePtr)
+    function _verifyBasicConstraintsExtension(bytes memory certificate, Asn1Ptr valuePtr)
         internal
         pure
         returns (int256 maxPathLen)
     {
         maxPathLen = -1;
-        NodePtr basicConstraintsPtr = certificate.firstChildOf(valuePtr);
+        Asn1Ptr basicConstraintsPtr = certificate.firstChildOf(valuePtr);
         if (certificate[basicConstraintsPtr.header()] == 0x01) {
             // skip optional isCA bool
             require(basicConstraintsPtr.length() == 1, "invalid isCA bool value");
@@ -255,7 +254,7 @@ contract CertManager {
         }
     }
 
-    function _verifyKeyUsageExtension(bytes memory certificate, NodePtr valuePtr, bool clientCert) internal pure {
+    function _verifyKeyUsageExtension(bytes memory certificate, Asn1Ptr valuePtr, bool clientCert) internal pure {
         uint256 value = certificate.bitstringUintAt(valuePtr);
         // bits are reversed (DigitalSignature 0x01 => 0x80, CertSign 0x32 => 0x04)
         if (clientCert) {
@@ -265,17 +264,17 @@ contract CertManager {
         }
     }
 
-    function _verifyCertSignature(bytes memory certificate, NodePtr ptr, bytes memory pubKey) internal view {
-        NodePtr sigAlgoPtr = certificate.nextSiblingOf(ptr);
+    function _verifyCertSignature(bytes memory certificate, Asn1Ptr ptr, bytes memory pubKey) internal view {
+        Asn1Ptr sigAlgoPtr = certificate.nextSiblingOf(ptr);
         require(certificate.keccak(sigAlgoPtr.content(), sigAlgoPtr.length()) == CERT_ALGO_OID, "invalid cert sig algo");
 
         bytes memory hash = Sha2Ext.sha384(certificate, ptr.header(), ptr.totalLength());
 
-        NodePtr sigPtr = certificate.nextSiblingOf(sigAlgoPtr);
-        NodePtr sigBPtr = certificate.bitstring(sigPtr);
-        NodePtr sigRoot = certificate.rootOf(sigBPtr);
-        NodePtr sigRPtr = certificate.firstChildOf(sigRoot);
-        NodePtr sigSPtr = certificate.nextSiblingOf(sigRPtr);
+        Asn1Ptr sigPtr = certificate.nextSiblingOf(sigAlgoPtr);
+        Asn1Ptr sigBPtr = certificate.bitstring(sigPtr);
+        Asn1Ptr sigRoot = certificate.rootOf(sigBPtr);
+        Asn1Ptr sigRPtr = certificate.firstChildOf(sigRoot);
+        Asn1Ptr sigSPtr = certificate.nextSiblingOf(sigRPtr);
         (uint128 rhi, uint256 rlo) = certificate.uint384At(sigRPtr);
         (uint128 shi, uint256 slo) = certificate.uint384At(sigSPtr);
         bytes memory sigPacked = abi.encodePacked(rhi, rlo, shi, slo);

@@ -14,10 +14,10 @@ interface ICertManager {
     }
 
     function verifyCert(bytes memory cert, bool clientCert, bytes32 parentCertHash)
-    external
-    returns (CachedCert memory);
+        external
+        returns (CachedCert memory);
 
     function verifyCertBundle(bytes memory certificate, bytes[] calldata cabundle)
-    external
-    returns (CachedCert memory);
+        external
+        returns (CachedCert memory);
 }

@@ -27,6 +27,9 @@ library ECDSA384 {
         hex"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff";
     bytes public constant CURVE_N =
         hex"ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973";
+    // use n-1 for lowSmax, which allows s-values above n/2
+    bytes public constant CURVE_LOW_S_MAX =
+        hex"ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52972";
 
     /**
      * @notice 384-bit curve parameters.
@@ -38,6 +41,7 @@ library ECDSA384 {
         bytes gy;
         bytes p;
         bytes n;
+        bytes lowSmax;
     }
 
     struct _Parameters {
@@ -47,6 +51,7 @@ library ECDSA384 {
         uint256 gy;
         uint256 p;
         uint256 n;
+        uint256 lowSmax;
     }
 
     struct _Inputs {
@@ -58,7 +63,7 @@ library ECDSA384 {
 
     /**
      * @notice The function to verify the ECDSA signature
-     * @param curveParams_ the 384-bit curve parameters.
+     * @param curveParams_ the 384-bit curve parameters. `lowSmax` is `n / 2`.
      * @param hashedMessage_ the already hashed message to be verified.
      * @param signature_ the ECDSA signature. Equals to `bytes(r) + bytes(s)`.
      * @param pubKey_ the full public key of a signer. Equals to `bytes(x) + bytes(y)`.
@@ -83,10 +88,14 @@ library ECDSA384 {
                 gx: curveParams_.gx.init(),
                 gy: curveParams_.gy.init(),
                 p: curveParams_.p.init(),
-                n: curveParams_.n.init()
+                n: curveParams_.n.init(),
+                lowSmax: curveParams_.lowSmax.init()
             });
 
-            if (U384.eqInteger(inputs_.r, 0) || U384.cmp(inputs_.r, params_.n) >= 0 || U384.eqInteger(inputs_.s, 0)) {
+            if (
+                U384.eqInteger(inputs_.r, 0) || U384.cmp(inputs_.r, params_.n) >= 0 || U384.eqInteger(inputs_.s, 0)
+                    || U384.cmp(inputs_.s, params_.lowSmax) > 0
+            ) {
                 return false;
             }
 

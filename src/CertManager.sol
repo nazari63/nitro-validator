@@ -268,7 +268,8 @@ contract CertManager is ICertManager {
             gx: ECDSA384.CURVE_GX,
             gy: ECDSA384.CURVE_GY,
             p: ECDSA384.CURVE_P,
-            n: ECDSA384.CURVE_N
+            n: ECDSA384.CURVE_N,
+            lowSmax: ECDSA384.CURVE_LOW_S_MAX
         });
         require(ECDSA384.verify(CURVE_PARAMETERS, hash, sig, pubKey), "invalid sig");
     }

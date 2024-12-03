@@ -75,6 +75,14 @@ library ECDSA384 {
                 lowSmax: curveParams_.lowSmax.init()
             });
 
+            if (
+                U384.eqInteger(inputs_.r, 0) ||
+                U384.cmp(inputs_.r, params_.n) >= 0 ||
+                U384.eqInteger(inputs_.s, 0)
+            ) {
+                return false;
+            }
+
             uint256 call = U384.initCall(params_.p);
 
             if (!_isOnCurve(call, params_.p, params_.a, params_.b, inputs_.x, inputs_.y)) {

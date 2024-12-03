@@ -93,7 +93,11 @@ library CborDecode {
         return elementAt(cbor, ptr.end(), 0x80, true);
     }
 
-    function elementAt(bytes memory cbor, uint256 ix, uint8 expectedType, bool required) internal pure returns (CborElement) {
+    function elementAt(bytes memory cbor, uint256 ix, uint8 expectedType, bool required)
+        internal
+        pure
+        returns (CborElement)
+    {
         uint8 _type = uint8(cbor[ix] & 0xe0);
         uint8 ai = uint8(cbor[ix] & 0x1f);
         if (_type == 0xe0) {

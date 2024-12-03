@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.15;
+pragma solidity ^0.8.19;
 
 import {Sha2Ext} from "./Sha2Ext.sol";
 import {Asn1Decode, Asn1Ptr, LibAsn1Ptr} from "./Asn1Decode.sol";
 import {ECDSA384} from "./ECDSA384.sol";
 import {LibBytes} from "./LibBytes.sol";
+import {ICertManager} from "./ICertManager.sol";
 
 // adapted from https://github.com/marlinprotocol/NitroProver/blob/f1d368d1f172ad3a55cd2aaaa98ad6a6e7dcde9d/src/CertManager.sol
 
-contract CertManager {
+contract CertManager is ICertManager {
     using Asn1Decode for bytes;
     using LibAsn1Ptr for Asn1Ptr;
     using LibBytes for bytes;
@@ -49,12 +50,6 @@ contract CertManager {
         hex"ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973";
     bytes public constant CURVE_LOW_S_MAX =
         hex"7fffffffffffffffffffffffffffffffffffffffffffffffe3b1a6c0fa1b96efac0d06d9245853bd76760cb5666294b9";
-
-    struct CachedCert {
-        uint256 notAfter;
-        int256 maxPathLen;
-        bytes pubKey;
-    }
 
     // certHash -> CachedCert
     mapping(bytes32 => bytes) public verified;

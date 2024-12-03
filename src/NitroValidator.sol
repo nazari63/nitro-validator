@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 
-import {CertManager} from "./CertManager.sol";
+import {ICertManager} from "./ICertManager.sol";
 import {Sha2Ext} from "./Sha2Ext.sol";
 import {CborDecode, CborElement, LibCborElement} from "./CborDecode.sol";
 import {Asn1Decode} from "./Asn1Decode.sol";
@@ -58,9 +58,9 @@ contract NitroValidator {
         CborElement nonce;
     }
 
-    CertManager public immutable certManager;
+    ICertManager public immutable certManager;
 
-    constructor(CertManager _certManager) {
+    constructor(ICertManager _certManager) {
         certManager = _certManager;
     }
 
@@ -109,7 +109,7 @@ contract NitroValidator {
             cabundle[i] = attestationTbs.slice(ptrs.cabundle[i]);
         }
 
-        CertManager.CachedCert memory parent = certManager.verifyCertBundle(cert, cabundle);
+        ICertManager.CachedCert memory parent = certManager.verifyCertBundle(cert, cabundle);
         bytes memory hash = Sha2Ext.sha384(attestationTbs, 0, attestationTbs.length);
         _verifySignature(parent.pubKey, hash, signature);
 

@@ -5,7 +5,8 @@ import {ICertManager} from "./ICertManager.sol";
 import {Sha2Ext} from "./Sha2Ext.sol";
 import {CborDecode, CborElement, LibCborElement} from "./CborDecode.sol";
 import {Asn1Decode} from "./Asn1Decode.sol";
-import {ECDSA384} from "./ECDSA384.sol";
+import {ECDSA384} from "@solarity/libs/crypto/ECDSA384.sol";
+import {ECDSA384Curve} from "./ECDSA384Curve.sol";
 import {LibBytes} from "./LibBytes.sol";
 
 import {console} from "forge-std/console.sol";
@@ -187,15 +188,6 @@ contract NitroValidator {
     }
 
     function _verifySignature(bytes memory pubKey, bytes memory hash, bytes memory sig) internal view {
-        ECDSA384.Parameters memory CURVE_PARAMETERS = ECDSA384.Parameters({
-            a: ECDSA384.CURVE_A,
-            b: ECDSA384.CURVE_B,
-            gx: ECDSA384.CURVE_GX,
-            gy: ECDSA384.CURVE_GY,
-            p: ECDSA384.CURVE_P,
-            n: ECDSA384.CURVE_N,
-            lowSmax: ECDSA384.CURVE_LOW_S_MAX
-        });
-        require(ECDSA384.verify(CURVE_PARAMETERS, hash, sig, pubKey), "invalid sig");
+        require(ECDSA384.verify(ECDSA384Curve.p384(), hash, sig, pubKey), "invalid sig");
     }
 }

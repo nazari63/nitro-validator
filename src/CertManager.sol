@@ -91,7 +91,7 @@ contract CertManager is ICertManager {
             if (parentCache.maxPathLen > 0 && (maxPathLen < 0 || maxPathLen >= parentCache.maxPathLen)) {
                 maxPathLen = parentCache.maxPathLen - 1;
             }
-            require((parentCache.maxPathLen == 0) == clientCert, "maxPathLen exceeded");
+            require(clientCert || parentCache.maxPathLen != 0, "maxPathLen exceeded");
             _verifyCertSignature(certificate, tbsCertPtr, parentCache.pubKey);
         }
 

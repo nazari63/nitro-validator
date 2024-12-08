@@ -129,6 +129,15 @@ contract CertManager is ICertManager {
         Asn1Ptr subjectPublicKeyInfoPtr = certificate.nextSiblingOf(subjectPtr);
         Asn1Ptr extensionsPtr = certificate.nextSiblingOf(subjectPublicKeyInfoPtr);
 
+        if (certificate[extensionsPtr.header()] == 0x81) {
+            // skip optional issuerUniqueID
+            extensionsPtr = certificate.nextSiblingOf(extensionsPtr);
+        }
+        if (certificate[extensionsPtr.header()] == 0x82) {
+            // skip optional subjectUniqueID
+            extensionsPtr = certificate.nextSiblingOf(extensionsPtr);
+        }
+
         notAfter = _verifyValidity(certificate, validityPtr);
         maxPathLen = _verifyExtensions(certificate, extensionsPtr, clientCert);
         pubKey = _parsePubKey(certificate, subjectPublicKeyInfoPtr);

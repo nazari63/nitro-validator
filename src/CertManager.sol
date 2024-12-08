@@ -208,7 +208,7 @@ contract CertManager is ICertManager {
 
                 if (oid == BASIC_CONSTRAINTS_OID) {
                     basicConstraintsFound = true;
-                    maxPathLen = _verifyBasicConstraintsExtension(certificate, valuePtr);
+                    maxPathLen = _verifyBasicConstraintsExtension(certificate, valuePtr, clientCert);
                 } else {
                     keyUsageFound = true;
                     _verifyKeyUsageExtension(certificate, valuePtr, clientCert);
@@ -226,18 +226,21 @@ contract CertManager is ICertManager {
         require(!clientCert || maxPathLen == -1, "maxPathLen must be undefined for client cert");
     }
 
-    function _verifyBasicConstraintsExtension(bytes memory certificate, Asn1Ptr valuePtr)
+    function _verifyBasicConstraintsExtension(bytes memory certificate, Asn1Ptr valuePtr, bool clientCert)
         internal
         pure
         returns (int256 maxPathLen)
     {
         maxPathLen = -1;
         Asn1Ptr basicConstraintsPtr = certificate.firstChildOf(valuePtr);
+        bool isCA;
         if (certificate[basicConstraintsPtr.header()] == 0x01) {
-            // skip optional isCA bool
             require(basicConstraintsPtr.length() == 1, "invalid isCA bool value");
+            isCA = certificate[basicConstraintsPtr.content()] == 0xff;
             basicConstraintsPtr = certificate.nextSiblingOf(basicConstraintsPtr);
         }
+        // check isCA bool is equivalent to !clientCert
+        require(clientCert != isCA, "isCA must be opposite to clientCert");
         if (certificate[basicConstraintsPtr.header()] == 0x02) {
             maxPathLen = int256(certificate.uintAt(basicConstraintsPtr));
         }

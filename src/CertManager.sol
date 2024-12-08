@@ -15,11 +15,15 @@ contract CertManager is ICertManager {
     using LibAsn1Ptr for Asn1Ptr;
     using LibBytes for bytes;
 
-    // @dev download the root CA cert for AWS nitro enclaves from https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip
-    // @dev convert the base64 encoded pub key into hex to get the cert below
-    bytes public constant ROOT_CA_CERT =
-        hex"3082021130820196a003020102021100f93175681b90afe11d46ccb4e4e7f856300a06082a8648ce3d0403033049310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753311b301906035504030c126177732e6e6974726f2d656e636c61766573301e170d3139313032383133323830355a170d3439313032383134323830355a3049310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753311b301906035504030c126177732e6e6974726f2d656e636c617665733076301006072a8648ce3d020106052b8104002203620004fc0254eba608c1f36870e29ada90be46383292736e894bfff672d989444b5051e534a4b1f6dbe3c0bc581a32b7b176070ede12d69a3fea211b66e752cf7dd1dd095f6f1370f4170843d9dc100121e4cf63012809664487c9796284304dc53ff4a3423040300f0603551d130101ff040530030101ff301d0603551d0e041604149025b50dd90547e796c396fa729dcf99a9df4b96300e0603551d0f0101ff040403020186300a06082a8648ce3d0403030369003066023100a37f2f91a1c9bd5ee7b8627c1698d255038e1f0343f95b63a9628c3d39809545a11ebcbf2e3b55d8aeee71b4c3d6adf3023100a2f39b1605b27028a5dd4ba069b5016e65b4fbde8fe0061d6a53197f9cdaf5d943bc61fc2beb03cb6fee8d2302f3dff6";
-    bytes32 public constant ROOT_CA_CERT_HASH = keccak256(ROOT_CA_CERT);
+    // root CA certificate constants (don't store it to reduce contract size)
+    bytes32 public constant ROOT_CA_CERT_HASH = 0x311d96fcd5c5e0ccf72ef548e2ea7d4c0cd53ad7c4cc49e67471aed41d61f185;
+    uint256 public constant ROOT_CA_CERT_NOT_AFTER = 2519044085;
+    int256 public constant ROOT_CA_CERT_MAX_PATH_LEN = -1;
+    bytes32 public constant ROOT_CA_CERT_SUBJECT_HASH =
+        0x3c3e2e5f1dd14dee5db88341ba71521e939afdb7881aa24c9f1e1c007a2fa8b6;
+    bytes public constant ROOT_CA_CERT_PUB_KEY =
+        hex"fc0254eba608c1f36870e29ada90be46383292736e894bfff672d989444b5051e534a4b1f6dbe3c0bc581a32b7b176070ede12d69a3fea211b66e752cf7dd1dd095f6f1370f4170843d9dc100121e4cf63012809664487c9796284304dc53ff4";
+
     // OID 1.2.840.10045.4.3.3 represents {iso(1) member-body(2) us(840) ansi-x962(10045) signatures(4) ecdsa-with-SHA2(3) ecdsa-with-SHA384(3)}
     // which essentially means the signature algorithm is Elliptic curve Digital Signature Algorithm (DSA) coupled with the Secure Hash Algorithm 384 (SHA384) algorithm
     // @dev Sig algo is hardcoded here because the root cerificate's sig algorithm is known beforehand
@@ -40,8 +44,14 @@ contract CertManager is ICertManager {
     mapping(bytes32 => bytes) public verified;
 
     constructor() {
-        CachedCert memory empty;
-        _verifyCert(ROOT_CA_CERT, ROOT_CA_CERT_HASH, false, empty);
+        verified[ROOT_CA_CERT_HASH] = abi.encode(
+            CachedCert({
+                notAfter: ROOT_CA_CERT_NOT_AFTER,
+                maxPathLen: ROOT_CA_CERT_MAX_PATH_LEN,
+                subjectHash: ROOT_CA_CERT_SUBJECT_HASH,
+                pubKey: ROOT_CA_CERT_PUB_KEY
+            })
+        );
     }
 
     function verifyCert(bytes memory cert, bool clientCert, bytes32 parentCertHash)
@@ -88,15 +98,13 @@ contract CertManager is ICertManager {
         (uint256 notAfter, int256 maxPathLen, bytes32 issuerHash, bytes32 subjectHash, bytes memory pubKey) =
             _parseTbs(certificate, tbsCertPtr, clientCert);
 
-        if (parentCache.pubKey.length != 0 || certHash != ROOT_CA_CERT_HASH) {
-            require(parentCache.subjectHash == issuerHash, "issuer / subject mismatch");
+        require(parentCache.subjectHash == issuerHash, "issuer / subject mismatch");
 
-            if (parentCache.maxPathLen > 0 && (maxPathLen < 0 || maxPathLen >= parentCache.maxPathLen)) {
-                maxPathLen = parentCache.maxPathLen - 1;
-            }
-            require(clientCert || parentCache.maxPathLen != 0, "maxPathLen exceeded");
-            _verifyCertSignature(certificate, tbsCertPtr, parentCache.pubKey);
+        if (parentCache.maxPathLen > 0 && (maxPathLen < 0 || maxPathLen >= parentCache.maxPathLen)) {
+            maxPathLen = parentCache.maxPathLen - 1;
         }
+        require(clientCert || parentCache.maxPathLen != 0, "maxPathLen exceeded");
+        _verifyCertSignature(certificate, tbsCertPtr, parentCache.pubKey);
 
         cache = CachedCert({notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
         verified[certHash] = abi.encode(cache);

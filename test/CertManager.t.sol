@@ -2,7 +2,6 @@
 pragma solidity ^0.8.13;
 
 import {Test, console} from "forge-std/Test.sol";
-import {NitroValidator} from "../src/NitroValidator.sol";
 import {CertManager} from "../src/CertManager.sol";
 
 contract CertManagerTest is Test {

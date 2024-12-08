@@ -85,9 +85,12 @@ contract CertManager is ICertManager {
 
         Asn1Ptr root = certificate.root();
         Asn1Ptr tbsCertPtr = certificate.firstChildOf(root);
-        (uint256 notAfter, int256 maxPathLen, bytes memory pubKey) = _parseTbs(certificate, tbsCertPtr, clientCert);
+        (uint256 notAfter, int256 maxPathLen, bytes32 issuerHash, bytes32 subjectHash, bytes memory pubKey) =
+            _parseTbs(certificate, tbsCertPtr, clientCert);
 
         if (parentCache.pubKey.length != 0 || certHash != ROOT_CA_CERT_HASH) {
+            require(parentCache.subjectHash == issuerHash, "issuer / subject mismatch");
+
             if (parentCache.maxPathLen > 0 && (maxPathLen < 0 || maxPathLen >= parentCache.maxPathLen)) {
                 maxPathLen = parentCache.maxPathLen - 1;
             }
@@ -95,7 +98,7 @@ contract CertManager is ICertManager {
             _verifyCertSignature(certificate, tbsCertPtr, parentCache.pubKey);
         }
 
-        cache = CachedCert({notAfter: notAfter, maxPathLen: maxPathLen, pubKey: pubKey});
+        cache = CachedCert({notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
         verified[certHash] = abi.encode(cache);
         return cache;
     }
@@ -103,7 +106,7 @@ contract CertManager is ICertManager {
     function _parseTbs(bytes memory certificate, Asn1Ptr ptr, bool clientCert)
         internal
         view
-        returns (uint256 notAfter, int256 maxPathLen, bytes memory pubKey)
+        returns (uint256 notAfter, int256 maxPathLen, bytes32 issuerHash, bytes32 subjectHash, bytes memory pubKey)
     {
         Asn1Ptr versionPtr = certificate.firstChildOf(ptr);
         Asn1Ptr vPtr = certificate.firstChildOf(versionPtr);
@@ -115,17 +118,19 @@ contract CertManager is ICertManager {
         // as extensions are used in cert, version should be 3 (value 2) as per https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.1
         require(version == 2, "version should be 3");
 
-        (notAfter, maxPathLen, pubKey) = _parseTbsInner(certificate, sigAlgoPtr, clientCert);
+        (notAfter, maxPathLen, issuerHash, subjectHash, pubKey) = _parseTbsInner(certificate, sigAlgoPtr, clientCert);
     }
 
     function _parseTbsInner(bytes memory certificate, Asn1Ptr sigAlgoPtr, bool clientCert)
         internal
         view
-        returns (uint256 notAfter, int256 maxPathLen, bytes memory pubKey)
+        returns (uint256 notAfter, int256 maxPathLen, bytes32 issuerHash, bytes32 subjectHash, bytes memory pubKey)
     {
         Asn1Ptr issuerPtr = certificate.nextSiblingOf(sigAlgoPtr);
+        issuerHash = certificate.keccak(issuerPtr.content(), issuerPtr.length());
         Asn1Ptr validityPtr = certificate.nextSiblingOf(issuerPtr);
         Asn1Ptr subjectPtr = certificate.nextSiblingOf(validityPtr);
+        subjectHash = certificate.keccak(subjectPtr.content(), subjectPtr.length());
         Asn1Ptr subjectPublicKeyInfoPtr = certificate.nextSiblingOf(subjectPtr);
         Asn1Ptr extensionsPtr = certificate.nextSiblingOf(subjectPublicKeyInfoPtr);
 

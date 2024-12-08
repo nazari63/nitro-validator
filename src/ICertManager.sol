@@ -9,6 +9,7 @@ interface ICertManager {
     struct CachedCert {
         uint256 notAfter;
         int256 maxPathLen;
+        bytes32 subjectHash;
         bytes pubKey;
     }
 

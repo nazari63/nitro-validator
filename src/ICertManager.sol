@@ -6,7 +6,7 @@ import {Asn1Decode, Asn1Ptr, LibAsn1Ptr} from "./Asn1Decode.sol";
 import {LibBytes} from "./LibBytes.sol";
 
 interface ICertManager {
-    struct CachedCert {
+    struct VerifiedCert {
         bool ca;
         uint64 notAfter;
         int64 maxPathLen;
@@ -16,9 +16,9 @@ interface ICertManager {
 
     function verifyCert(bytes memory cert, bool clientCert, bytes32 parentCertHash)
         external
-        returns (CachedCert memory);
+        returns (VerifiedCert memory);
 
     function verifyCertBundle(bytes memory certificate, bytes[] calldata cabundle)
         external
-        returns (CachedCert memory);
+        returns (VerifiedCert memory);
 }

@@ -24,7 +24,7 @@ contract RootCertCheckTest is Test, CertManager {
             _parseTbs(ROOT_CA_CERT, tbsCertPtr, true);
 
         bytes32 certHash = keccak256(ROOT_CA_CERT);
-        bytes memory cache = abi.encodePacked(true, notAfter, maxPathLen, subjectHash, pubKey);
-        assertEq(verified[certHash], cache);
+        bytes memory cert = abi.encodePacked(true, notAfter, maxPathLen, subjectHash, pubKey);
+        assertEq(verified[certHash], cert);
     }
 }

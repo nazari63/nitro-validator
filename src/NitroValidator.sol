@@ -94,7 +94,7 @@ contract NitroValidator {
             cabundle[i] = attestationTbs.slice(ptrs.cabundle[i]);
         }
 
-        ICertManager.CachedCert memory parent = certManager.verifyCertBundle(cert, cabundle);
+        ICertManager.VerifiedCert memory parent = certManager.verifyCertBundle(cert, cabundle);
         bytes memory hash = Sha2Ext.sha384(attestationTbs, 0, attestationTbs.length);
         _verifySignature(parent.pubKey, hash, signature);
 

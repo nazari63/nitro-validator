@@ -40,13 +40,13 @@ contract CertManager is ICertManager {
     bytes32 public constant BASIC_CONSTRAINTS_OID = keccak256(hex"551d13");
     bytes32 public constant KEY_USAGE_OID = keccak256(hex"551d0f");
 
-    // certHash -> CachedCert
+    // certHash -> VerifiedCert
     mapping(bytes32 => bytes) public verified;
 
     constructor() {
         _saveVerified(
             ROOT_CA_CERT_HASH,
-            CachedCert({
+            VerifiedCert({
                 ca: true,
                 notAfter: ROOT_CA_CERT_NOT_AFTER,
                 maxPathLen: ROOT_CA_CERT_MAX_PATH_LEN,
@@ -56,40 +56,40 @@ contract CertManager is ICertManager {
         );
     }
 
-    function verifyCert(bytes memory cert, bool ca, bytes32 parentCertHash) external returns (CachedCert memory) {
+    function verifyCert(bytes memory cert, bool ca, bytes32 parentCertHash) external returns (VerifiedCert memory) {
         return _verifyCert(cert, keccak256(cert), ca, _loadVerified(parentCertHash));
     }
 
     function verifyCertBundle(bytes memory certificate, bytes[] calldata cabundle)
         external
-        returns (CachedCert memory)
+        returns (VerifiedCert memory)
     {
-        CachedCert memory parentCache;
+        VerifiedCert memory parent;
         for (uint256 i = 0; i < cabundle.length; i++) {
             bytes32 certHash = keccak256(cabundle[i]);
             require(i > 0 || certHash == ROOT_CA_CERT_HASH, "Root CA cert not matching");
-            parentCache = _verifyCert(cabundle[i], certHash, true, parentCache);
+            parent = _verifyCert(cabundle[i], certHash, true, parent);
         }
-        return _verifyCert(certificate, keccak256(certificate), false, parentCache);
+        return _verifyCert(certificate, keccak256(certificate), false, parent);
     }
 
-    function _verifyCert(bytes memory certificate, bytes32 certHash, bool ca, CachedCert memory parentCache)
+    function _verifyCert(bytes memory certificate, bytes32 certHash, bool ca, VerifiedCert memory parent)
         internal
-        returns (CachedCert memory)
+        returns (VerifiedCert memory)
     {
         if (certHash != ROOT_CA_CERT_HASH) {
-            require(parentCache.pubKey.length > 0, "parent cert unverified");
-            require(parentCache.notAfter >= block.timestamp, "parent cert expired");
-            require(parentCache.ca, "parent cert is not a CA");
-            require(!ca || parentCache.maxPathLen != 0, "maxPathLen exceeded");
+            require(parent.pubKey.length > 0, "parent cert unverified");
+            require(parent.notAfter >= block.timestamp, "parent cert expired");
+            require(parent.ca, "parent cert is not a CA");
+            require(!ca || parent.maxPathLen != 0, "maxPathLen exceeded");
         }
 
         // skip verification if already verified
-        CachedCert memory cache = _loadVerified(certHash);
-        if (cache.pubKey.length != 0) {
-            require(cache.notAfter >= block.timestamp, "cert expired");
-            require(cache.ca == ca, "cert is not a CA");
-            return cache;
+        VerifiedCert memory cert = _loadVerified(certHash);
+        if (cert.pubKey.length != 0) {
+            require(cert.notAfter >= block.timestamp, "cert expired");
+            require(cert.ca == ca, "cert is not a CA");
+            return cert;
         }
 
         Asn1Ptr root = certificate.root();
@@ -97,20 +97,20 @@ contract CertManager is ICertManager {
         (uint64 notAfter, int64 maxPathLen, bytes32 issuerHash, bytes32 subjectHash, bytes memory pubKey) =
             _parseTbs(certificate, tbsCertPtr, ca);
 
-        require(parentCache.subjectHash == issuerHash, "issuer / subject mismatch");
+        require(parent.subjectHash == issuerHash, "issuer / subject mismatch");
 
         // constrain maxPathLen to parent's maxPathLen-1
-        if (parentCache.maxPathLen > 0 && (maxPathLen < 0 || maxPathLen >= parentCache.maxPathLen)) {
-            maxPathLen = parentCache.maxPathLen - 1;
+        if (parent.maxPathLen > 0 && (maxPathLen < 0 || maxPathLen >= parent.maxPathLen)) {
+            maxPathLen = parent.maxPathLen - 1;
         }
 
-        _verifyCertSignature(certificate, tbsCertPtr, parentCache.pubKey);
+        _verifyCertSignature(certificate, tbsCertPtr, parent.pubKey);
 
-        cache =
-            CachedCert({ca: ca, notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
-        _saveVerified(certHash, cache);
+        cert =
+            VerifiedCert({ca: ca, notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
+        _saveVerified(certHash, cert);
 
-        return cache;
+        return cert;
     }
 
     function _parseTbs(bytes memory certificate, Asn1Ptr ptr, bool ca)
@@ -292,15 +292,14 @@ contract CertManager is ICertManager {
         require(ECDSA384.verify(ECDSA384Curve.p384(), hash, sig, pubKey), "invalid sig");
     }
 
-    function _saveVerified(bytes32 certHash, CachedCert memory cache) internal {
-        verified[certHash] =
-            abi.encodePacked(cache.ca, cache.notAfter, cache.maxPathLen, cache.subjectHash, cache.pubKey);
+    function _saveVerified(bytes32 certHash, VerifiedCert memory cert) internal {
+        verified[certHash] = abi.encodePacked(cert.ca, cert.notAfter, cert.maxPathLen, cert.subjectHash, cert.pubKey);
     }
 
-    function _loadVerified(bytes32 certHash) internal view returns (CachedCert memory) {
+    function _loadVerified(bytes32 certHash) internal view returns (VerifiedCert memory) {
         bytes memory packed = verified[certHash];
         if (packed.length == 0) {
-            return CachedCert({ca: false, notAfter: 0, maxPathLen: 0, subjectHash: 0, pubKey: ""});
+            return VerifiedCert({ca: false, notAfter: 0, maxPathLen: 0, subjectHash: 0, pubKey: ""});
         }
         bool ca;
         uint64 notAfter;
@@ -314,6 +313,6 @@ contract CertManager is ICertManager {
         }
         bytes memory pubKey = packed.slice(0x31, packed.length - 0x31);
         return
-            CachedCert({ca: ca, notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
+            VerifiedCert({ca: ca, notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
     }
 }

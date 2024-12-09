@@ -7,8 +7,9 @@ import {LibBytes} from "./LibBytes.sol";
 
 interface ICertManager {
     struct CachedCert {
-        uint256 notAfter;
-        int256 maxPathLen;
+        bool ca;
+        uint64 notAfter;
+        int64 maxPathLen;
         bytes32 subjectHash;
         bytes pubKey;
     }

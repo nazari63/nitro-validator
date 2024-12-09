@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.22;
 
 import {Sha2Ext} from "./Sha2Ext.sol";
 import {Asn1Decode, Asn1Ptr, LibAsn1Ptr} from "./Asn1Decode.sol";
@@ -17,8 +17,8 @@ contract CertManager is ICertManager {
 
     // root CA certificate constants (don't store it to reduce contract size)
     bytes32 public constant ROOT_CA_CERT_HASH = 0x311d96fcd5c5e0ccf72ef548e2ea7d4c0cd53ad7c4cc49e67471aed41d61f185;
-    uint256 public constant ROOT_CA_CERT_NOT_AFTER = 2519044085;
-    int256 public constant ROOT_CA_CERT_MAX_PATH_LEN = -1;
+    uint64 public constant ROOT_CA_CERT_NOT_AFTER = 2519044085;
+    int64 public constant ROOT_CA_CERT_MAX_PATH_LEN = -1;
     bytes32 public constant ROOT_CA_CERT_SUBJECT_HASH =
         0x3c3e2e5f1dd14dee5db88341ba71521e939afdb7881aa24c9f1e1c007a2fa8b6;
     bytes public constant ROOT_CA_CERT_PUB_KEY =
@@ -44,8 +44,10 @@ contract CertManager is ICertManager {
     mapping(bytes32 => bytes) public verified;
 
     constructor() {
-        verified[ROOT_CA_CERT_HASH] = abi.encode(
+        _saveVerified(
+            ROOT_CA_CERT_HASH,
             CachedCert({
+                ca: true,
                 notAfter: ROOT_CA_CERT_NOT_AFTER,
                 maxPathLen: ROOT_CA_CERT_MAX_PATH_LEN,
                 subjectHash: ROOT_CA_CERT_SUBJECT_HASH,
@@ -54,17 +56,8 @@ contract CertManager is ICertManager {
         );
     }
 
-    function verifyCert(bytes memory cert, bool clientCert, bytes32 parentCertHash)
-        external
-        returns (CachedCert memory)
-    {
-        bytes memory parentCacheBytes = verified[parentCertHash];
-        require(parentCacheBytes.length != 0, "parent cert unverified");
-        CachedCert memory parentCache = abi.decode(parentCacheBytes, (CachedCert));
-        require(parentCache.notAfter >= block.timestamp, "parent cert expired");
-        bytes32 certHash = keccak256(cert);
-        require(verified[certHash].length == 0, "cert already verified");
-        return _verifyCert(cert, certHash, clientCert, parentCache);
+    function verifyCert(bytes memory cert, bool ca, bytes32 parentCertHash) external returns (CachedCert memory) {
+        return _verifyCert(cert, keccak256(cert), ca, _loadVerified(parentCertHash));
     }
 
     function verifyCertBundle(bytes memory certificate, bytes[] calldata cabundle)
@@ -75,46 +68,55 @@ contract CertManager is ICertManager {
         for (uint256 i = 0; i < cabundle.length; i++) {
             bytes32 certHash = keccak256(cabundle[i]);
             require(i > 0 || certHash == ROOT_CA_CERT_HASH, "Root CA cert not matching");
-            parentCache = _verifyCert(cabundle[i], certHash, false, parentCache);
+            parentCache = _verifyCert(cabundle[i], certHash, true, parentCache);
         }
-        return _verifyCert(certificate, keccak256(certificate), true, parentCache);
+        return _verifyCert(certificate, keccak256(certificate), false, parentCache);
     }
 
-    function _verifyCert(bytes memory certificate, bytes32 certHash, bool clientCert, CachedCert memory parentCache)
+    function _verifyCert(bytes memory certificate, bytes32 certHash, bool ca, CachedCert memory parentCache)
         internal
         returns (CachedCert memory)
     {
+        if (certHash != ROOT_CA_CERT_HASH) {
+            require(parentCache.pubKey.length > 0, "parent cert unverified");
+            require(parentCache.notAfter >= block.timestamp, "parent cert expired");
+            require(parentCache.ca, "parent cert is not a CA");
+            require(!ca || parentCache.maxPathLen != 0, "maxPathLen exceeded");
+        }
+
         // skip verification if already verified
-        bytes memory cacheBytes = verified[certHash];
-        CachedCert memory cache;
-        if (cacheBytes.length != 0) {
-            cache = abi.decode(cacheBytes, (CachedCert));
+        CachedCert memory cache = _loadVerified(certHash);
+        if (cache.pubKey.length != 0) {
             require(cache.notAfter >= block.timestamp, "cert expired");
+            require(cache.ca == ca, "cert is not a CA");
             return cache;
         }
 
         Asn1Ptr root = certificate.root();
         Asn1Ptr tbsCertPtr = certificate.firstChildOf(root);
-        (uint256 notAfter, int256 maxPathLen, bytes32 issuerHash, bytes32 subjectHash, bytes memory pubKey) =
-            _parseTbs(certificate, tbsCertPtr, clientCert);
+        (uint64 notAfter, int64 maxPathLen, bytes32 issuerHash, bytes32 subjectHash, bytes memory pubKey) =
+            _parseTbs(certificate, tbsCertPtr, ca);
 
         require(parentCache.subjectHash == issuerHash, "issuer / subject mismatch");
 
+        // constrain maxPathLen to parent's maxPathLen-1
         if (parentCache.maxPathLen > 0 && (maxPathLen < 0 || maxPathLen >= parentCache.maxPathLen)) {
             maxPathLen = parentCache.maxPathLen - 1;
         }
-        require(clientCert || parentCache.maxPathLen != 0, "maxPathLen exceeded");
+
         _verifyCertSignature(certificate, tbsCertPtr, parentCache.pubKey);
 
-        cache = CachedCert({notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
-        verified[certHash] = abi.encode(cache);
+        cache =
+            CachedCert({ca: ca, notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
+        _saveVerified(certHash, cache);
+
         return cache;
     }
 
-    function _parseTbs(bytes memory certificate, Asn1Ptr ptr, bool clientCert)
+    function _parseTbs(bytes memory certificate, Asn1Ptr ptr, bool ca)
         internal
         view
-        returns (uint256 notAfter, int256 maxPathLen, bytes32 issuerHash, bytes32 subjectHash, bytes memory pubKey)
+        returns (uint64 notAfter, int64 maxPathLen, bytes32 issuerHash, bytes32 subjectHash, bytes memory pubKey)
     {
         Asn1Ptr versionPtr = certificate.firstChildOf(ptr);
         Asn1Ptr vPtr = certificate.firstChildOf(versionPtr);
@@ -126,13 +128,13 @@ contract CertManager is ICertManager {
         // as extensions are used in cert, version should be 3 (value 2) as per https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.1
         require(version == 2, "version should be 3");
 
-        (notAfter, maxPathLen, issuerHash, subjectHash, pubKey) = _parseTbsInner(certificate, sigAlgoPtr, clientCert);
+        (notAfter, maxPathLen, issuerHash, subjectHash, pubKey) = _parseTbsInner(certificate, sigAlgoPtr, ca);
     }
 
-    function _parseTbsInner(bytes memory certificate, Asn1Ptr sigAlgoPtr, bool clientCert)
+    function _parseTbsInner(bytes memory certificate, Asn1Ptr sigAlgoPtr, bool ca)
         internal
         view
-        returns (uint256 notAfter, int256 maxPathLen, bytes32 issuerHash, bytes32 subjectHash, bytes memory pubKey)
+        returns (uint64 notAfter, int64 maxPathLen, bytes32 issuerHash, bytes32 subjectHash, bytes memory pubKey)
     {
         Asn1Ptr issuerPtr = certificate.nextSiblingOf(sigAlgoPtr);
         issuerHash = certificate.keccak(issuerPtr.content(), issuerPtr.length());
@@ -152,7 +154,7 @@ contract CertManager is ICertManager {
         }
 
         notAfter = _verifyValidity(certificate, validityPtr);
-        maxPathLen = _verifyExtensions(certificate, extensionsPtr, clientCert);
+        maxPathLen = _verifyExtensions(certificate, extensionsPtr, ca);
         pubKey = _parsePubKey(certificate, subjectPublicKeyInfoPtr);
     }
 
@@ -180,21 +182,21 @@ contract CertManager is ICertManager {
         subjectPubKey = certificate.slice(end - 96, 96);
     }
 
-    function _verifyValidity(bytes memory certificate, Asn1Ptr validityPtr) internal view returns (uint256 notAfter) {
+    function _verifyValidity(bytes memory certificate, Asn1Ptr validityPtr) internal view returns (uint64 notAfter) {
         Asn1Ptr notBeforePtr = certificate.firstChildOf(validityPtr);
         Asn1Ptr notAfterPtr = certificate.nextSiblingOf(notBeforePtr);
 
         uint256 notBefore = certificate.timestampAt(notBeforePtr);
-        notAfter = certificate.timestampAt(notAfterPtr);
+        notAfter = uint64(certificate.timestampAt(notAfterPtr));
 
         require(notBefore <= block.timestamp, "certificate not valid yet");
         require(notAfter >= block.timestamp, "certificate not valid anymore");
     }
 
-    function _verifyExtensions(bytes memory certificate, Asn1Ptr extensionsPtr, bool clientCert)
+    function _verifyExtensions(bytes memory certificate, Asn1Ptr extensionsPtr, bool ca)
         internal
         pure
-        returns (int256 maxPathLen)
+        returns (int64 maxPathLen)
     {
         require(certificate[extensionsPtr.header()] == 0xa3, "invalid extensions");
         extensionsPtr = certificate.firstChildOf(extensionsPtr);
@@ -221,10 +223,10 @@ contract CertManager is ICertManager {
 
                 if (oid == BASIC_CONSTRAINTS_OID) {
                     basicConstraintsFound = true;
-                    maxPathLen = _verifyBasicConstraintsExtension(certificate, valuePtr, clientCert);
+                    maxPathLen = _verifyBasicConstraintsExtension(certificate, valuePtr, ca);
                 } else {
                     keyUsageFound = true;
-                    _verifyKeyUsageExtension(certificate, valuePtr, clientCert);
+                    _verifyKeyUsageExtension(certificate, valuePtr, ca);
                 }
             }
 
@@ -236,13 +238,13 @@ contract CertManager is ICertManager {
 
         require(basicConstraintsFound, "basicConstraints not found");
         require(keyUsageFound, "keyUsage not found");
-        require(!clientCert || maxPathLen == -1, "maxPathLen must be undefined for client cert");
+        require(ca || maxPathLen == -1, "maxPathLen must be undefined for client cert");
     }
 
-    function _verifyBasicConstraintsExtension(bytes memory certificate, Asn1Ptr valuePtr, bool clientCert)
+    function _verifyBasicConstraintsExtension(bytes memory certificate, Asn1Ptr valuePtr, bool ca)
         internal
         pure
-        returns (int256 maxPathLen)
+        returns (int64 maxPathLen)
     {
         maxPathLen = -1;
         Asn1Ptr basicConstraintsPtr = certificate.firstChildOf(valuePtr);
@@ -252,20 +254,19 @@ contract CertManager is ICertManager {
             isCA = certificate[basicConstraintsPtr.content()] == 0xff;
             basicConstraintsPtr = certificate.nextSiblingOf(basicConstraintsPtr);
         }
-        // check isCA bool is equivalent to !clientCert
-        require(clientCert != isCA, "isCA must be opposite to clientCert");
+        require(ca == isCA, "isCA must be true for CA certs");
         if (certificate[basicConstraintsPtr.header()] == 0x02) {
-            maxPathLen = int256(certificate.uintAt(basicConstraintsPtr));
+            maxPathLen = int64(uint64(certificate.uintAt(basicConstraintsPtr)));
         }
     }
 
-    function _verifyKeyUsageExtension(bytes memory certificate, Asn1Ptr valuePtr, bool clientCert) internal pure {
+    function _verifyKeyUsageExtension(bytes memory certificate, Asn1Ptr valuePtr, bool ca) internal pure {
         uint256 value = certificate.bitstringUintAt(valuePtr);
         // bits are reversed (DigitalSignature 0x01 => 0x80, CertSign 0x32 => 0x04)
-        if (clientCert) {
-            require(value & 0x80 == 0x80, "DigitalSignature must be present");
-        } else {
+        if (ca) {
             require(value & 0x04 == 0x04, "CertSign must be present");
+        } else {
+            require(value & 0x80 == 0x80, "DigitalSignature must be present");
         }
     }
 
@@ -289,5 +290,30 @@ contract CertManager is ICertManager {
 
     function _verifySignature(bytes memory pubKey, bytes memory hash, bytes memory sig) internal view {
         require(ECDSA384.verify(ECDSA384Curve.p384(), hash, sig, pubKey), "invalid sig");
+    }
+
+    function _saveVerified(bytes32 certHash, CachedCert memory cache) internal {
+        verified[certHash] =
+            abi.encodePacked(cache.ca, cache.notAfter, cache.maxPathLen, cache.subjectHash, cache.pubKey);
+    }
+
+    function _loadVerified(bytes32 certHash) internal view returns (CachedCert memory) {
+        bytes memory packed = verified[certHash];
+        if (packed.length == 0) {
+            return CachedCert({ca: false, notAfter: 0, maxPathLen: 0, subjectHash: 0, pubKey: ""});
+        }
+        bool ca;
+        uint64 notAfter;
+        int64 maxPathLen;
+        bytes32 subjectHash;
+        assembly {
+            ca := mload(add(packed, 0x1))
+            notAfter := mload(add(packed, 0x9))
+            maxPathLen := mload(add(packed, 0x11))
+            subjectHash := mload(add(packed, 0x31))
+        }
+        bytes memory pubKey = packed.slice(0x31, packed.length - 0x31);
+        return
+            CachedCert({ca: ca, notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
     }
 }

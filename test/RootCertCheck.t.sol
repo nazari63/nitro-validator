@@ -20,12 +20,11 @@ contract RootCertCheckTest is Test, CertManager {
     function test_ParseCert() public view {
         Asn1Ptr root = ROOT_CA_CERT.root();
         Asn1Ptr tbsCertPtr = ROOT_CA_CERT.firstChildOf(root);
-        (uint256 notAfter, int256 maxPathLen,, bytes32 subjectHash, bytes memory pubKey) =
-            _parseTbs(ROOT_CA_CERT, tbsCertPtr, false);
-        CachedCert memory cert =
-            CachedCert({notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
+        (uint64 notAfter, int64 maxPathLen,, bytes32 subjectHash, bytes memory pubKey) =
+            _parseTbs(ROOT_CA_CERT, tbsCertPtr, true);
 
         bytes32 certHash = keccak256(ROOT_CA_CERT);
-        assertEq(verified[certHash], abi.encode(cert));
+        bytes memory cache = abi.encodePacked(true, notAfter, maxPathLen, subjectHash, pubKey);
+        assertEq(verified[certHash], cache);
     }
 }

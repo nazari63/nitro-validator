@@ -88,9 +88,16 @@ contract NitroValidator {
         require(ptrs.userData.isNull() || (ptrs.userData.length() <= 512), "invalid user data");
         require(ptrs.nonce.isNull() || (ptrs.nonce.length() <= 512), "invalid nonce");
 
+        for (uint256 i = 0; i < ptrs.pcrs.length; i++) {
+            require(
+                ptrs.pcrs[i].length() == 32 || ptrs.pcrs[i].length() == 48 || ptrs.pcrs[i].length() == 64, "invalid pcr"
+            );
+        }
+
         bytes memory cert = attestationTbs.slice(ptrs.cert);
         bytes[] memory cabundle = new bytes[](ptrs.cabundle.length);
         for (uint256 i = 0; i < ptrs.cabundle.length; i++) {
+            require(1 <= ptrs.cabundle[i].length() && ptrs.cabundle[i].length() <= 1024, "invalid cabundle cert");
             cabundle[i] = attestationTbs.slice(ptrs.cabundle[i]);
         }
 

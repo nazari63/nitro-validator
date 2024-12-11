@@ -301,7 +301,7 @@ contract CertManager is ICertManager {
         if (packed.length == 0) {
             return VerifiedCert({ca: false, notAfter: 0, maxPathLen: 0, subjectHash: 0, pubKey: ""});
         }
-        bool ca;
+        uint8 ca;
         uint64 notAfter;
         int64 maxPathLen;
         bytes32 subjectHash;
@@ -313,6 +313,6 @@ contract CertManager is ICertManager {
         }
         bytes memory pubKey = packed.slice(0x31, packed.length - 0x31);
         return
-            VerifiedCert({ca: ca, notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
+            VerifiedCert({ca: ca != 0, notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
     }
 }

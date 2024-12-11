@@ -312,7 +312,12 @@ contract CertManager is ICertManager {
             subjectHash := mload(add(packed, 0x31))
         }
         bytes memory pubKey = packed.slice(0x31, packed.length - 0x31);
-        return
-            VerifiedCert({ca: ca != 0, notAfter: notAfter, maxPathLen: maxPathLen, subjectHash: subjectHash, pubKey: pubKey});
+        return VerifiedCert({
+            ca: ca != 0,
+            notAfter: notAfter,
+            maxPathLen: maxPathLen,
+            subjectHash: subjectHash,
+            pubKey: pubKey
+        });
     }
 }
